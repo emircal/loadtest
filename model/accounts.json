@@ -1,0 +1,31 @@
+{
+  "accountId": "8888888888888888",
+  "presentationId": "4111222233334444",
+  "clientNumber": "1000",
+  "org": "001",
+  "system": "2000",
+  "status": {
+    "code": "A",
+    "description": "Active",
+    "isClosed": false
+  },
+  "balances": {
+    "currentBalance": 1250.50,
+    "availableCredit": 3749.50,
+    "creditLimit": 5000.00,
+    "minPaymentDue": 25.00
+  },
+  "dates": {
+    "openedDate": "2023-01-15",
+    "lastStatementDate": "2026-03-01",
+    "dueDate": "2026-03-25"
+  },
+  "cardholder": {
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "address": {
+      "city": "New York",
+      "state": "NY"
+    }
+  }
+}

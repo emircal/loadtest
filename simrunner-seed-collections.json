@@ -1,0 +1,164 @@
+{
+  "connectionString": "mongodb+srv://admin:1234qwer!@cluster0.7pd3e.mongodb.net/",
+  "reportInterval": 10000,
+  "http": {
+    "enabled": false,
+    "port": 3000,
+    "host": "localhost"
+  },
+  "dictionaries": {
+    "collectionsAccountIds": {
+      "file": "model/collections-account-ids.txt",
+      "type": "text"
+    }
+  },
+  "templates": [
+    {
+      "name": "collections",
+      "database": "simrunner",
+      "collection": "collections",
+      "template": {
+        "collectionId": {
+          "%stringConcat": {
+            "of": [
+              "COL-",
+              {
+                "%toString": {
+                  "of": "%sequence"
+                }
+              }
+            ],
+            "sep": ""
+          }
+        },
+        "accountId": {
+          "%dictionaryAt": {
+            "from": "collectionsAccountIds",
+            "at": {
+              "%mod": {
+                "of": "%sequence",
+                "by": 1000
+              }
+            }
+          }
+        },
+        "delinquency": {
+          "daysPastDue": {
+            "%number": {
+              "min": 0,
+              "max": 180
+            }
+          },
+          "bucket": {
+            "%number": {
+              "min": 0,
+              "max": 5
+            }
+          },
+          "delinquentAmount": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "chargeOffDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          }
+        },
+        "workflow": {
+          "queueId": {
+            "%stringConcat": {
+              "of": [
+                "Q-",
+                {
+                  "%oneOf": {
+                    "options": [
+                      "NORTH",
+                      "SOUTH",
+                      "EAST",
+                      "WEST"
+                    ]
+                  }
+                },
+                "-RECOVERY"
+              ],
+              "sep": ""
+            }
+          },
+          "assignedAgent": {
+            "%stringConcat": {
+              "of": [
+                "AGENT_",
+                {
+                  "%stringTemplate": {
+                    "template": "&&&&"
+                  }
+                }
+              ],
+              "sep": ""
+            }
+          },
+          "lastActionCode": {
+            "%oneOf": {
+              "options": [
+                "LM",
+                "PM",
+                "CC"
+              ]
+            }
+          }
+        },
+        "paymentPromises": {
+          "%array": {
+            "min": 0,
+            "max": 5,
+            "of": {
+              "promiseDate": {
+                "%date": {
+                  "min": {
+                    "$date": "2024-01-01"
+                  },
+                  "max": {
+                    "$date": "2026-12-31"
+                  }
+                }
+              },
+              "amount": {
+                "%decimal": {
+                  "min": 0,
+                  "max": 10000
+                }
+              },
+              "status": {
+                "%oneOf": {
+                  "options": [
+                    "PENDING",
+                    "FULFILLED",
+                    "BROKEN"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "name": "Seed collections (20% accounts)",
+      "template": "collections",
+      "op": "insert",
+      "threads": 5,
+      "batch": 20,
+      "stopAfter": 10
+    }
+  ]
+}

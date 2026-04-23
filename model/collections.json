@@ -1,0 +1,22 @@
+{
+  "collectionId": "COL-77441",
+  "accountId": "8888888888888888",
+  "delinquency": {
+    "daysPastDue": 45,
+    "bucket": 2,
+    "delinquentAmount": 150.75,
+    "chargeOffDate": null
+  },
+  "workflow": {
+    "queueId": "Q-NORTH-RECOVERY",
+    "assignedAgent": "AGENT_007",
+    "lastActionCode": "LM"
+  },
+  "paymentPromises": [
+    {
+      "promiseDate": "2026-03-20",
+      "amount": 75.00,
+      "status": "PENDING"
+    }
+  ]
+}

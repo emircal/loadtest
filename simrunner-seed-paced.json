@@ -1,0 +1,479 @@
+{
+  "connectionString": "mongodb+srv://admin:1234qwer!@cluster0.7pd3e.mongodb.net/",
+  "reportInterval": 10000,
+  "http": {
+    "enabled": false,
+    "port": 3000,
+    "host": "localhost"
+  },
+  "dictionaries": {
+    "accountIds": {
+      "type": "collection",
+      "db": "simrunner",
+      "collection": "accounts",
+      "query": {},
+      "limit": 1000000,
+      "attribute": "accountId"
+    }
+  },
+  "templates": [
+    {
+      "name": "accounts",
+      "database": "simrunner",
+      "collection": "accounts",
+      "sharding": {
+        "key": {
+          "accountId": 1
+        },
+        "presplit": [
+          {
+            "point": {
+              "accountId": "3333333333333333"
+            },
+            "shard": "atlas-re47yl-shard-1"
+          },
+          {
+            "point": {
+              "accountId": "6666666666666666"
+            },
+            "shard": "config"
+          }
+        ]
+      },
+      "remember": [
+        "accountId"
+      ],
+      "template": {
+        "accountId": {
+          "%stringTemplate": {
+            "template": "&&&&&&&&&&&&&&&&"
+          }
+        },
+        "presentationId": {
+          "%stringTemplate": {
+            "template": "&&&&&&&&&&&&&&&&"
+          }
+        },
+        "clientNumber": {
+          "%stringTemplate": {
+            "template": "&&&&"
+          }
+        },
+        "org": {
+          "%stringTemplate": {
+            "template": "&&&&"
+          }
+        },
+        "system": {
+          "%stringTemplate": {
+            "template": "&&&&"
+          }
+        },
+        "status": {
+          "%oneOf": {
+            "options": [
+              {
+                "code": "A",
+                "description": "Active",
+                "isClosed": false
+              },
+              {
+                "code": "I",
+                "description": "Inactive",
+                "isClosed": false
+              },
+              {
+                "code": "C",
+                "description": "Closed",
+                "isClosed": true
+              }
+            ]
+          }
+        },
+        "balances": {
+          "currentBalance": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "availableCredit": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "creditLimit": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "minPaymentDue": {
+            "%decimal": {
+              "min": 0,
+              "max": 500
+            }
+          }
+        },
+        "dates": {
+          "openedDate": {
+            "%date": {
+              "min": {
+                "$date": "2020-01-01"
+              },
+              "max": {
+                "$date": "2023-12-31"
+              }
+            }
+          },
+          "lastStatementDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          },
+          "dueDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          }
+        },
+        "cardholder": {
+          "firstName": "%name.firstName",
+          "lastName": "%name.lastName",
+          "address": {
+            "city": "%address.city",
+            "state": "%address.stateAbbr"
+          }
+        }
+      }
+    },
+    {
+      "name": "transactions",
+      "database": "simrunner",
+      "collection": "transactions",
+      "sharding": {
+        "key": {
+          "accountId": 1,
+          "transactionId": 1
+        },
+        "presplit": [
+          {
+            "point": {
+              "accountId": "3333333333333333",
+              "transactionId": ""
+            },
+            "shard": "atlas-re47yl-shard-1"
+          },
+          {
+            "point": {
+              "accountId": "6666666666666666",
+              "transactionId": ""
+            },
+            "shard": "config"
+          }
+        ]
+      },
+      "template": {
+        "transactionId": {
+          "%stringConcat": {
+            "of": [
+              "TXN",
+              {
+                "%toString": {
+                  "of": "%sequence"
+                }
+              }
+            ],
+            "sep": ""
+          }
+        },
+        "accountId": "#txAccountId",
+        "recordType": {
+          "%oneOf": {
+            "options": [
+              1,
+              2
+            ]
+          }
+        },
+        "transactionDetails": {
+          "postDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          },
+          "effectiveDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          },
+          "amount": {
+            "%decimal": {
+              "min": -5000,
+              "max": 5000
+            }
+          },
+          "currency": {
+            "%oneOf": {
+              "options": [
+                "USD",
+                "EUR",
+                "GBP"
+              ]
+            }
+          },
+          "description": "%lorem.sentence",
+          "mcc": {
+            "%number": {
+              "min": 1000,
+              "max": 9999
+            }
+          },
+          "type": {
+            "%oneOf": {
+              "options": [
+                "PURCHASE",
+                "REFUND",
+                "WITHDRAWAL"
+              ]
+            }
+          }
+        },
+        "audit": {
+          "uuid": "%uuidString",
+          "rts": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          },
+          "agent": {
+            "%stringConcat": {
+              "of": [
+                "AGENT_",
+                {
+                  "%stringTemplate": {
+                    "template": "&&&&"
+                  }
+                }
+              ],
+              "sep": ""
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "collections",
+      "database": "simrunner",
+      "collection": "collections",
+      "sharding": {
+        "key": {
+          "accountId": 1,
+          "collectionId": 1
+        },
+        "presplit": [
+          {
+            "point": {
+              "accountId": "3333333333333333",
+              "collectionId": ""
+            },
+            "shard": "atlas-re47yl-shard-1"
+          },
+          {
+            "point": {
+              "accountId": "6666666666666666",
+              "collectionId": ""
+            },
+            "shard": "config"
+          }
+        ]
+      },
+      "template": {
+        "collectionId": {
+          "%stringConcat": {
+            "of": [
+              "COL-",
+              {
+                "%toString": {
+                  "of": "%sequence"
+                }
+              }
+            ],
+            "sep": ""
+          }
+        },
+        "accountId": "#colAccountId",
+        "delinquency": {
+          "daysPastDue": {
+            "%number": {
+              "min": 0,
+              "max": 180
+            }
+          },
+          "bucket": {
+            "%number": {
+              "min": 0,
+              "max": 5
+            }
+          },
+          "delinquentAmount": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "chargeOffDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          }
+        },
+        "workflow": {
+          "queueId": {
+            "%stringConcat": {
+              "of": [
+                "Q-",
+                {
+                  "%oneOf": {
+                    "options": [
+                      "NORTH",
+                      "SOUTH",
+                      "EAST",
+                      "WEST"
+                    ]
+                  }
+                },
+                "-RECOVERY"
+              ],
+              "sep": ""
+            }
+          },
+          "assignedAgent": {
+            "%stringConcat": {
+              "of": [
+                "AGENT_",
+                {
+                  "%stringTemplate": {
+                    "template": "&&&&"
+                  }
+                }
+              ],
+              "sep": ""
+            }
+          },
+          "lastActionCode": {
+            "%oneOf": {
+              "options": [
+                "LM",
+                "PM",
+                "CC"
+              ]
+            }
+          }
+        },
+        "paymentPromises": {
+          "%array": {
+            "min": 0,
+            "max": 5,
+            "of": {
+              "promiseDate": {
+                "%date": {
+                  "min": {
+                    "$date": "2024-01-01"
+                  },
+                  "max": {
+                    "$date": "2026-12-31"
+                  }
+                }
+              },
+              "amount": {
+                "%decimal": {
+                  "min": 0,
+                  "max": 10000
+                }
+              },
+              "status": {
+                "%oneOf": {
+                  "options": [
+                    "PENDING",
+                    "FULFILLED",
+                    "BROKEN"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "comment": "Base seeding rate: ~1000 accounts/second (10 ops/s x 100 batch)",
+      "name": "Insert accounts",
+      "template": "accounts",
+      "op": "insert",
+      "threads": 6,
+      "batch": 100
+    },
+    {
+      "comment": "Target ~260 transactions/account on average (~260k tx/second)",
+      "name": "Insert transactions",
+      "template": "transactions",
+      "op": "insert",
+      "variables": {
+        "txAccountId": "#accountIds"
+      },
+      "variablesScope": "operation",
+      "threads": 6,
+      "batch": 650,
+      "pace": 5,
+      "startAfterDuration": 5000
+    },
+    {
+      "comment": "Target ~3.5% collections-to-accounts ratio on average (~35 collections/second)",
+      "name": "Insert collections",
+      "template": "collections",
+      "op": "insert",
+      "variables": {
+        "colAccountId": "#accountIds"
+      },
+      "variablesScope": "operation",
+      "threads": 2,
+      "batch": 7,
+      "pace": 200,
+      "startAfterDuration": 10000
+    }
+  ]
+}

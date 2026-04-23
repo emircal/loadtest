@@ -1,0 +1,63 @@
+{
+  "connectionString": "mongodb+srv://admin:1234qwer!@cluster0.7pd3e.mongodb.net/",
+  "http": {
+    "enabled": false,
+    "port": 3000,
+    "host": "localhost"
+  },
+  "reportInterval": 10000,
+  "templates": [
+    {
+      "name": "accounts",
+      "database": "simrunner",
+      "collection": "accounts",
+      "remember": [
+        "accountId"
+      ],
+      "template": {
+        "accountId": {
+          "%stringTemplate": {
+            "template": "&&&&&&&&&&&&&&&&"
+          }
+        }
+      }
+    },
+    {
+      "name": "transactions",
+      "database": "simrunner",
+      "collection": "transactions",
+      "template": {
+        "accountId": "#accountId"
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "name": "Find account by accountId",
+      "template": "accounts",
+      "op": "find",
+      "params": {
+        "filter": {
+          "accountId": "#accountId"
+        },
+        "limit": 1
+      },
+      "threads": 10
+    },
+    {
+      "name": "Find transactions by accountId",
+      "template": "transactions",
+      "op": "find",
+      "params": {
+        "filter": {
+          "accountId": "#accountId"
+        },
+        "sort": {
+          "transactionDetails.postDate": -1
+        },
+        "limit": 50
+      },
+      "threads": 10
+    }
+  ]
+}

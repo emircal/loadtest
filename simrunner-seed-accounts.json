@@ -1,0 +1,153 @@
+{
+  "connectionString": "mongodb+srv://admin:1234qwer!@cluster0.7pd3e.mongodb.net/",
+  "reportInterval": 10000,
+  "http": {
+    "enabled": false,
+    "port": 3000,
+    "host": "localhost"
+  },
+  "dictionaries": {
+    "accountIds": {
+      "file": "model/accounts-ids.txt",
+      "type": "text"
+    }
+  },
+  "templates": [
+    {
+      "name": "accounts",
+      "database": "simrunner",
+      "collection": "accounts",
+      "remember": ["accountId"],
+      "template": {
+        "accountId": {
+          "%dictionaryAt": {
+            "from": "accountIds",
+            "at": {
+              "%mod": {
+                "of": "%sequence",
+                "by": 5000
+              }
+            }
+          }
+        },
+        "presentationId": {
+          "%stringTemplate": {
+            "template": "&&&&&&&&&&&&&&&&"
+          }
+        },
+        "clientNumber": {
+          "%stringTemplate": {
+            "template": "&&&&"
+          }
+        },
+        "org": {
+          "%stringTemplate": {
+            "template": "&&&&"
+          }
+        },
+        "system": {
+          "%stringTemplate": {
+            "template": "&&&&"
+          }
+        },
+        "status": {
+          "%oneOf": {
+            "options": [
+              {
+                "code": "A",
+                "description": "Active",
+                "isClosed": false
+              },
+              {
+                "code": "I",
+                "description": "Inactive",
+                "isClosed": false
+              },
+              {
+                "code": "C",
+                "description": "Closed",
+                "isClosed": true
+              }
+            ]
+          }
+        },
+        "balances": {
+          "currentBalance": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "availableCredit": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "creditLimit": {
+            "%decimal": {
+              "min": 0,
+              "max": 10000
+            }
+          },
+          "minPaymentDue": {
+            "%decimal": {
+              "min": 0,
+              "max": 500
+            }
+          }
+        },
+        "dates": {
+          "openedDate": {
+            "%date": {
+              "min": {
+                "$date": "2020-01-01"
+              },
+              "max": {
+                "$date": "2023-12-31"
+              }
+            }
+          },
+          "lastStatementDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          },
+          "dueDate": {
+            "%date": {
+              "min": {
+                "$date": "2024-01-01"
+              },
+              "max": {
+                "$date": "2026-12-31"
+              }
+            }
+          }
+        },
+        "cardholder": {
+          "firstName": "%name.firstName",
+          "lastName": "%name.lastName",
+          "address": {
+            "city": "%address.city",
+            "state": "%address.stateAbbr"
+          }
+        }
+      }
+    }
+  ],
+  "workloads": [
+    {
+      "name": "Seed accounts (5000)",
+      "template": "accounts",
+      "op": "insert",
+      "threads": 5,
+      "batch": 50,
+      "stopAfter": 20
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "transactionId": "TXN9988776655",
+  "accountId": "8888888888888888",
+  "recordType": 1, 
+  "transactionDetails": {
+    "postDate": "2026-03-10",
+    "effectiveDate": "2026-03-09",
+    "amount": -45.20,
+    "currency": "USD",
+    "description": "Starbucks Coffee NY",
+    "mcc": "5812",
+    "type": "PURCHASE"
+  },
+  "audit": {
+    "uuid": "a5eac27d-cd89-4096-a331-306480bfee76",
+    "rts": "2026-03-10T11:30:19Z",
+    "agent": "4000"
+  }
+}

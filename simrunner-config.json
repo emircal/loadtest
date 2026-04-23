@@ -1,0 +1,183 @@
+{
+    "connectionString": "mongodb+srv://foo:foo@abc.defgh.mongodb.net",
+    "http": {
+        "enabled": false,
+        "port": 3000,
+        "host": "localhost"
+    },
+    "reportInterval": 10000,
+    "templates": [
+        {
+            "name": "accounts",
+            "database": "simrunner",
+            "collection": "accounts",
+            "sharding": {
+                "key": {
+                    "accountId": 1
+                },
+                "presplit": [
+                    { "point": {"accountId": "3"}, "shard": "shard1" },
+                    { "point": {"accountId": "6"}, "shard": "shard2" }
+                ]
+            },
+            "instances": 10,
+            "remember": ["accountId"],
+            "template": {
+                "accountId": {"%stringTemplate": {"template": "&&&&&&&&&&&&&&&&"}},
+                "presentationId": {"%stringTemplate": {"template": "&&&&&&&&&&&&&&&&"}},
+                "clientNumber": {"%stringTemplate": {"template": "&&&&"}},
+                "org": {"%stringTemplate": {"template": "&&&&"}},
+                "system": {"%stringTemplate": {"template": "&&&&"}},
+                "status": {"%oneOf": {"options": [
+                    {"code": "A", "description": "Active", "isClosed": false},
+                    {"code": "I", "description": "Inactive", "isClosed": false},
+                    {"code": "C", "description": "Closed", "isClosed": true}
+                ]}},
+                "balances": {
+                    "currentBalance": {"%decimal": {"min": 0, "max": 10000}},
+                    "availableCredit": {"%decimal": {"min": 0, "max": 10000}},
+                    "creditLimit": {"%decimal": {"min": 0, "max": 10000}},
+                    "minPaymentDue": {"%decimal": {"min": 0, "max": 500}}
+                },
+                "dates": {
+                    "openedDate": {"%date": {"min": {"$date": "2020-01-01"}, "max": {"$date": "2023-12-31"}}},
+                    "lastStatementDate": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}},
+                    "dueDate": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}}
+                },
+                "cardholder": {
+                    "firstName": "%name.firstName",
+                    "lastName": "%name.lastName",
+                    "address": {
+                        "city": "%address.city",
+                        "state": "%address.stateAbbr"
+                    }
+                }
+            }
+        },
+        {
+            "name": "transactions",
+            "database": "simrunner",
+            "collection": "transactions",
+            "sharding": {
+                "key": {
+                    "accountId": 1, "transactionId": 1
+                },
+                "presplit": [
+                    { "point": {"accountId": "3", "transactionId": ""}, "shard": "shard1" },
+                    { "point": {"accountId": "6", "transactionId": ""}, "shard": "shard2" }
+                ]
+            },
+            "instances": 10,
+            "template": {
+                "transactionId": {"%stringConcat": {"of": ["TXN", {"%stringTemplate": {"template": "&&&&&&&&&&"}}], "sep": ""}},
+                "accountId": "#accountId",
+                "recordType": {"%oneOf": {"options": [1, 2]}},
+                "transactionDetails": {
+                    "postDate": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}},
+                    "effectiveDate": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}},
+                    "amount": {"%decimal": {"min": -5000, "max": 5000}},
+                    "currency": {"%oneOf": {"options": ["USD", "EUR", "GBP"]}},
+                    "description": "%lorem.sentence",
+                    "mcc": {"%number": {"min": 1000, "max": 9999}},
+                    "type": {"%oneOf": {"options": ["PURCHASE", "REFUND", "WITHDRAWAL"]}}
+                },
+                "audit": {
+                    "uuid": "%uuidString",
+                    "rts": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}},
+                    "agent": {"%stringConcat": {"of": ["AGENT_", {"%stringTemplate": {"template": "&&&&"}}], "sep": ""}}
+                }
+            }
+        },
+        {
+            "name": "collections",
+            "database": "simrunner",
+            "collection": "collections",
+            "sharding": {
+                "key": {
+                    "accountId": 1, "collectionId": 1
+                },
+                "presplit": [
+                    { "point": {"accountId": "3", "collectionId": ""}, "shard": "shard1" },
+                    { "point": {"accountId": "6", "collectionId": ""}, "shard": "shard2" }
+                ]
+            },
+            "instances": 10,
+            "template": {
+                "collectionId": {"%stringConcat": {"of": ["COL-", {"%stringTemplate": {"template": "&&&&&"}}], "sep": ""}},
+                "accountId": "#accountId",
+                "delinquency": {
+                    "daysPastDue": {"%number": {"min": 0, "max": 180}},
+                    "bucket": {"%number": {"min": 0, "max": 5}},
+                    "delinquentAmount": {"%decimal": {"min": 0, "max": 10000}},
+                    "chargeOffDate": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}}
+                },
+                "workflow": {
+                    "queueId": {"%stringConcat": {"of": ["Q-", {"%oneOf": {"options": ["NORTH", "SOUTH", "EAST", "WEST"]}}, "-RECOVERY"], "sep": ""}},
+                    "assignedAgent": {"%stringConcat": {"of": ["AGENT_", {"%stringTemplate": {"template": "&&&&"}}], "sep": ""}},
+                    "lastActionCode": {"%oneOf": {"options": ["LM", "PM", "CC"]}}
+                },
+                "paymentPromises": {
+                    "%array": {
+                        "min": 0,
+                        "max": 5,
+                        "of": {
+                            "promiseDate": {"%date": {"min": {"$date": "2024-01-01"}, "max": {"$date": "2026-12-31"}}},
+                            "amount": {"%decimal": {"min": 0, "max": 10000}},
+                            "status": {"%oneOf": {"options": ["PENDING", "FULFILLED", "BROKEN"]}}
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "workloads": [
+        {
+            "name": "Insert accounts",
+            "template": "accounts",
+            "op": "insert",
+            "threads": 5,
+            "batch": 50
+        },
+        {
+            "name": "Insert transactions",
+            "template": "transactions",
+            "op": "insert",
+            "variables": {
+                "accountId": "#accountId"
+            },
+            "threads": 10,
+            "batch": 100
+        },
+        {
+            "name": "Insert collections",
+            "template": "collections",
+            "op": "insert",
+            "variables": {
+                "accountId": "#accountId"
+            },
+            "threads": 3,
+            "batch": 20
+        },
+        {
+            "name": "Find account by accountId",
+            "template": "accounts",
+            "op": "find",
+            "params": {
+                "filter": {"accountId": "#accountId"},
+                "limit": 1
+            },
+            "threads": 10
+        },
+        {
+            "name": "Find transactions by accountId",
+            "template": "transactions",
+            "op": "find",
+            "params": {
+                "filter": {"accountId": "#accountId"},
+                "sort": {"transactionDetails.postDate": -1},
+                "limit": 50
+            },
+            "threads": 10
+        }
+    ]
+}
