@@ -6,43 +6,11 @@
     "port": 3000,
     "host": "localhost"
   },
-  "dictionaries": {
-    "accountIds": {
-      "type": "collection",
-      "db": "simrunner",
-      "collection": "accounts",
-      "query": {},
-      "limit": 1000000,
-      "attribute": "accountId"
-    }
-  },
   "templates": [
     {
       "name": "accounts",
       "database": "simrunner",
       "collection": "accounts",
-      "sharding": {
-        "key": {
-          "accountId": 1
-        },
-        "presplit": [
-          {
-            "point": {
-              "accountId": "3333333333333333"
-            },
-            "shard": "atlas-re47yl-shard-1"
-          },
-          {
-            "point": {
-              "accountId": "6666666666666666"
-            },
-            "shard": "config"
-          }
-        ]
-      },
-      "remember": [
-        "accountId"
-      ],
       "template": {
         "accountId": {
           "%stringTemplate": {
@@ -162,27 +130,15 @@
       "name": "transactions",
       "database": "simrunner",
       "collection": "transactions",
-      "sharding": {
-        "key": {
-          "accountId": 1,
-          "transactionId": 1
-        },
-        "presplit": [
-          {
-            "point": {
-              "accountId": "3333333333333333",
-              "transactionId": ""
-            },
-            "shard": "atlas-re47yl-shard-1"
-          },
-          {
-            "point": {
-              "accountId": "6666666666666666",
-              "transactionId": ""
-            },
-            "shard": "config"
-          }
-        ]
+      "dictionaries": {
+        "accountIds": {
+          "type": "collection",
+          "db": "simrunner",
+          "collection": "accounts",
+          "query": {},
+          "limit": 1000000,
+          "attribute": "accountId"
+        }
       },
       "template": {
         "transactionId": {
@@ -191,14 +147,22 @@
               "TXN",
               {
                 "%toString": {
-                  "of": "%sequence"
+                  "of": {
+                    "%natural": {
+                      "max": 999999999999999
+                    }
+                  }
                 }
               }
             ],
             "sep": ""
           }
         },
-        "accountId": "#txAccountId",
+        "accountId": {
+          "%dictionary": {
+            "name": "accountIds"
+          }
+        },
         "recordType": {
           "%oneOf": {
             "options": [
@@ -292,27 +256,15 @@
       "name": "collections",
       "database": "simrunner",
       "collection": "collections",
-      "sharding": {
-        "key": {
-          "accountId": 1,
-          "collectionId": 1
-        },
-        "presplit": [
-          {
-            "point": {
-              "accountId": "3333333333333333",
-              "collectionId": ""
-            },
-            "shard": "atlas-re47yl-shard-1"
-          },
-          {
-            "point": {
-              "accountId": "6666666666666666",
-              "collectionId": ""
-            },
-            "shard": "config"
-          }
-        ]
+      "dictionaries": {
+        "accountIds": {
+          "type": "collection",
+          "db": "simrunner",
+          "collection": "accounts",
+          "query": {},
+          "limit": 1000000,
+          "attribute": "accountId"
+        }
       },
       "template": {
         "collectionId": {
@@ -321,14 +273,22 @@
               "COL-",
               {
                 "%toString": {
-                  "of": "%sequence"
+                  "of": {
+                    "%natural": {
+                      "max": 999999999999999
+                    }
+                  }
                 }
               }
             ],
             "sep": ""
           }
         },
-        "accountId": "#colAccountId",
+        "accountId": {
+          "%dictionary": {
+            "name": "accountIds"
+          }
+        },
         "delinquency": {
           "daysPastDue": {
             "%number": {
@@ -452,28 +412,16 @@
       "name": "Insert transactions",
       "template": "transactions",
       "op": "insert",
-      "variables": {
-        "txAccountId": "#accountIds"
-      },
-      "variablesScope": "operation",
       "threads": 6,
-      "batch": 650,
-      "pace": 5,
-      "startAfterDuration": 5000
+      "batch": 650
     },
     {
       "comment": "Target ~3.5% collections-to-accounts ratio on average (~35 collections/second)",
       "name": "Insert collections",
       "template": "collections",
       "op": "insert",
-      "variables": {
-        "colAccountId": "#accountIds"
-      },
-      "variablesScope": "operation",
-      "threads": 2,
-      "batch": 7,
-      "pace": 200,
-      "startAfterDuration": 10000
+      "threads": 1,
+      "batch": 7
     }
   ]
 }
