@@ -239,8 +239,7 @@ DICT_LIMIT_TRANSFORM='
 # ── Helper: generate configs for one site ─────────────────────────────────────
 gen_site() {
   local site_index="$1"
-  local site_prefix=""
-  [[ "${SITES}" -gt 1 ]] && site_prefix="SITE${site_index}_"
+  local site_prefix="SITE${site_index}_"
 
   local seed_accounts_json seed_children_json
 
