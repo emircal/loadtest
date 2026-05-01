@@ -38,7 +38,6 @@
 
   ensureIndex(targetDb.accounts, { accountId: 1 }, { name: 'accountId_1' });
   ensureIndex(targetDb.transactions, { accountId: 1, transactionId: 1 }, { name: 'accountId_1_transactionId_1' });
-  ensureIndex(targetDb.transactions, { accountId: 1, 'transactionDetails.postDate': -1 }, { name: 'accountId_1_transactionDetails.postDate_-1' });
   ensureIndex(targetDb.collections, { accountId: 1, collectionId: 1 }, { name: 'accountId_1_collectionId_1' });
 
   runAdmin({ enableSharding: dbName }, ['already enabled']);
@@ -78,6 +77,10 @@
     ],
     shardNames
   });
+
+  runAdmin({ setAllowMigrations: `${dbName}.accounts`, allowMigrations: false }, ['already disabled']);
+  runAdmin({ setAllowMigrations: `${dbName}.transactions`, allowMigrations: false }, ['already disabled']);
+  runAdmin({ setAllowMigrations: `${dbName}.collections`, allowMigrations: false }, ['already disabled']);
 
   print('Cluster initialization complete.');
 })();
