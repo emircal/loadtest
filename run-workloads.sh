@@ -18,6 +18,7 @@ Options:
   --threads N         Total client threads to allocate (default: 12)
   --dict-limit N      Max entries to preload per dictionary (default: 500000, max: 5000000)
   --disable-aggregates Exclude aggregate workloads from generated test config
+  --disable-account-reads Exclude ReadTxnByAcct and ReadCollByAcct workloads
   --duration-ms N     Global stopAfterDuration in milliseconds
   --duration-read-ms N  Read workload stopAfterDuration override in milliseconds
   --duration-write-ms N Write workload stopAfterDuration override in milliseconds
@@ -55,6 +56,7 @@ TOTAL_THREADS=12
 BASE_CONFIG=""
 DICT_LIMIT=500000
 DISABLE_AGGREGATES=0
+DISABLE_ACCOUNT_READS=0
 DURATION_MS=""
 DURATION_READ_MS=""
 DURATION_WRITE_MS=""
@@ -96,6 +98,7 @@ while [[ $# -gt 0 ]]; do
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
     --dict-limit)   DICT_LIMIT="$2"; shift 2 ;;
     --disable-aggregates) DISABLE_AGGREGATES=1; shift ;;
+    --disable-account-reads) DISABLE_ACCOUNT_READS=1; shift ;;
     --duration-ms)       DURATION_MS="$2"; shift 2 ;;
     --duration-read-ms)  DURATION_READ_MS="$2"; shift 2 ;;
     --duration-write-ms) DURATION_WRITE_MS="$2"; shift 2 ;;
@@ -214,6 +217,9 @@ fi
 mkdir -p "${HARNESS_DIR}"
 
 READ_WORKLOAD_COUNT=5
+if [[ "${DISABLE_ACCOUNT_READS}" -eq 1 ]]; then
+  READ_WORKLOAD_COUNT=3
+fi
 WRITE_WORKLOAD_COUNT=9
 
 READ_POOL=0
@@ -261,6 +267,7 @@ jq -n \
   --argjson writePool "${WRITE_POOL}" \
   --argjson dictLimit "${DICT_LIMIT}" \
   --argjson disableAggregates "${DISABLE_AGGREGATES}" \
+  --argjson disableAccountReads "${DISABLE_ACCOUNT_READS}" \
   --argjson durationMs "$(json_or_null "${DURATION_MS}")" \
   --argjson durationReadMs "$(json_or_null "${DURATION_READ_MS}")" \
   --argjson durationWriteMs "$(json_or_null "${DURATION_WRITE_MS}")" \
@@ -374,7 +381,12 @@ jq -n \
             limit: 20
           }
         }
-      ];
+      ]
+      | if $disableAccountReads == 1 then
+          map(select(.name != "ReadTxnByAcct" and .name != "ReadCollByAcct"))
+        else
+          .
+        end;
 
     def writeDefs:
       [
