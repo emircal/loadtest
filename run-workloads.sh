@@ -205,7 +205,11 @@ if [[ -z "${BASE_CONFIG}" ]]; then
   fi
 fi
 
-[[ -f "${BASE_CONFIG}" ]] || { echo "Base config not found: ${BASE_CONFIG}"; exit 1; }
+# Verify base config is readable (prevents NFS stalls from hanging silently)
+if [[ ! -r "${BASE_CONFIG}" ]]; then
+  echo "Error: base config not found or not readable: ${BASE_CONFIG}"
+  exit 1
+fi
 
 mkdir -p "${HARNESS_DIR}"
 
@@ -338,7 +342,7 @@ jq -n \
           template: "transactions",
           op: "find",
           params: {
-            filter: { transactionId: { "%dictionary": { name: "transactionIds" } } },
+            filter: { _id: { "%dictionary": { name: "transactionDocIds" } } },
             limit: 1
           }
         },
@@ -347,7 +351,7 @@ jq -n \
           template: "collections",
           op: "find",
           params: {
-            filter: { collectionId: { "%dictionary": { name: "collectionIds" } } },
+            filter: { _id: { "%dictionary": { name: "collectionDocIds" } } },
             limit: 1
           }
         },
@@ -384,7 +388,7 @@ jq -n \
           template: "accounts",
           op: "updateOne",
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { _id: { "%dictionary": { name: "accountDocIds" } } },
             update: {
               "$set": {
                 "balances.currentBalance": { "%decimal": { min: 0, max: 15000 } },
@@ -406,7 +410,7 @@ jq -n \
           template: "accounts",
           op: "deleteOne",
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } }
+            filter: { _id: { "%dictionary": { name: "accountDocIds" } } }
           }
         },
         {
@@ -419,7 +423,7 @@ jq -n \
           template: "transactions",
           op: "updateOne",
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { _id: { "%dictionary": { name: "transactionDocIds" } } },
             update: {
               "$set": {
                 "audit.rts": "%now",
@@ -437,7 +441,7 @@ jq -n \
           template: "transactions",
           op: "deleteOne",
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } }
+            filter: { _id: { "%dictionary": { name: "transactionDocIds" } } }
           }
         },
         {
@@ -450,7 +454,7 @@ jq -n \
           template: "collections",
           op: "updateOne",
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { _id: { "%dictionary": { name: "collectionDocIds" } } },
             update: {
               "$set": {
                 "workflow.lastActionCode": {
@@ -468,7 +472,7 @@ jq -n \
           template: "collections",
           op: "deleteOne",
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } }
+            filter: { _id: { "%dictionary": { name: "collectionDocIds" } } }
           }
         }
       ];
@@ -487,6 +491,14 @@ jq -n \
                     query: {},
                     limit: $dictLimit,
                     attribute: "accountId"
+                  },
+                  accountDocIds: {
+                    type: "collection",
+                    db: .database,
+                    collection: .collection,
+                    query: {},
+                    limit: $dictLimit,
+                    attribute: "_id"
                   }
                 }
               }
@@ -500,6 +512,14 @@ jq -n \
                     query: {},
                     limit: $dictLimit,
                     attribute: "transactionId"
+                  },
+                  transactionDocIds: {
+                    type: "collection",
+                    db: .database,
+                    collection: .collection,
+                    query: {},
+                    limit: $dictLimit,
+                    attribute: "_id"
                   }
                 })
               }
@@ -513,6 +533,14 @@ jq -n \
                     query: {},
                     limit: $dictLimit,
                     attribute: "collectionId"
+                  },
+                  collectionDocIds: {
+                    type: "collection",
+                    db: .database,
+                    collection: .collection,
+                    query: {},
+                    limit: $dictLimit,
+                    attribute: "_id"
                   }
                 })
               }
