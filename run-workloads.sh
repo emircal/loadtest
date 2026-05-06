@@ -16,6 +16,7 @@ Options:
   --mode MODE         Workload mode: read | write | mixed (default: mixed)
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
+  --disable-aggregates Exclude aggregate workloads from generated test config
   --duration-ms N     Global stopAfterDuration in milliseconds
   --duration-read-ms N  Read workload stopAfterDuration override in milliseconds
   --duration-write-ms N Write workload stopAfterDuration override in milliseconds
@@ -37,6 +38,7 @@ Examples:
   ./run-workloads.sh --mode write --threads 18 /path/to/SimRunner.jar
   ./run-workloads.sh --mode read --threads 12 --dry-run
   ./run-workloads.sh --mode mixed --read-pct 70 --threads 20 /path/to/SimRunner.jar
+  ./run-workloads.sh --mode mixed --read-pct 70 --threads 20 --disable-aggregates /path/to/SimRunner.jar
   ./run-workloads.sh --mode mixed --read-pct 70 --threads 20 --duration-ms 600000 --pace-ms 20 /path/to/SimRunner.jar
   ./run-workloads.sh --mode read --threads 12 --duration-ms 180000 --pace-find-ms 5 --pace-aggregate-ms 200 /path/to/SimRunner.jar
 EOF
@@ -49,6 +51,7 @@ MODE="mixed"
 READ_PCT=50
 TOTAL_THREADS=12
 BASE_CONFIG=""
+DISABLE_AGGREGATES=0
 DURATION_MS=""
 DURATION_READ_MS=""
 DURATION_WRITE_MS=""
@@ -88,6 +91,7 @@ while [[ $# -gt 0 ]]; do
     --mode)         MODE="$2"; shift 2 ;;
     --read-pct)     READ_PCT="$2"; shift 2 ;;
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
+    --disable-aggregates) DISABLE_AGGREGATES=1; shift ;;
     --duration-ms)       DURATION_MS="$2"; shift 2 ;;
     --duration-read-ms)  DURATION_READ_MS="$2"; shift 2 ;;
     --duration-write-ms) DURATION_WRITE_MS="$2"; shift 2 ;;
@@ -194,6 +198,10 @@ mkdir -p "${HARNESS_DIR}"
 READ_WORKLOAD_COUNT=6
 WRITE_WORKLOAD_COUNT=9
 
+if [[ "${DISABLE_AGGREGATES}" -eq 1 ]]; then
+  READ_WORKLOAD_COUNT=3
+fi
+
 READ_POOL=0
 WRITE_POOL=0
 
@@ -237,6 +245,7 @@ jq -n \
   --arg mode "${MODE}" \
   --argjson readPool "${READ_POOL}" \
   --argjson writePool "${WRITE_POOL}" \
+  --argjson disableAggregates "${DISABLE_AGGREGATES}" \
   --argjson durationMs "$(json_or_null "${DURATION_MS}")" \
   --argjson durationReadMs "$(json_or_null "${DURATION_READ_MS}")" \
   --argjson durationWriteMs "$(json_or_null "${DURATION_WRITE_MS}")" \
@@ -382,6 +391,13 @@ jq -n \
         }
       ];
 
+    def effectiveReadDefs:
+      if $disableAggregates == 1 then
+        readDefs | map(select(.op != "aggregate"))
+      else
+        readDefs
+      end;
+
     def writeDefs:
       [
         {
@@ -507,11 +523,11 @@ jq -n \
       ) as $templates
     | (
         if $mode == "read" then
-          distribute($readPool; readDefs)
+          distribute($readPool; effectiveReadDefs)
         elif $mode == "write" then
           distribute($writePool; writeDefs)
         else
-          distribute($readPool; readDefs) + distribute($writePool; writeDefs)
+          distribute($readPool; effectiveReadDefs) + distribute($writePool; writeDefs)
         end
         | map(withTiming)
       ) as $workloads
