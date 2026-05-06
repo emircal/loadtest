@@ -195,12 +195,8 @@ fi
 
 mkdir -p "${HARNESS_DIR}"
 
-READ_WORKLOAD_COUNT=6
+READ_WORKLOAD_COUNT=5
 WRITE_WORKLOAD_COUNT=9
-
-if [[ "${DISABLE_AGGREGATES}" -eq 1 ]]; then
-  READ_WORKLOAD_COUNT=3
-fi
 
 READ_POOL=0
 WRITE_POOL=0
@@ -314,7 +310,7 @@ jq -n \
     def readDefs:
       [
         {
-          name: "Read accounts by accountId",
+          name: "ReadAcctById",
           template: "accounts",
           op: "find",
           params: {
@@ -323,90 +319,53 @@ jq -n \
           }
         },
         {
-          name: "Aggregate accounts by status",
-          template: "accounts",
-          op: "aggregate",
+          name: "ReadTxnById",
+          template: "transactions",
+          op: "find",
           params: {
-            pipeline: [
-              { "$match": { accountId: { "%dictionary": { name: "accountIds" } } } },
-              { "$group": { _id: "$status.code", count: { "$sum": 1 } } },
-              { "$limit": 100 }
-            ]
+            filter: { transactionId: { "%dictionary": { name: "transactionIds" } } },
+            limit: 1
           }
         },
         {
-          name: "Read transactions by accountId",
+          name: "ReadCollById",
+          template: "collections",
+          op: "find",
+          params: {
+            filter: { collectionId: { "%dictionary": { name: "collectionIds" } } },
+            limit: 1
+          }
+        },
+        {
+          name: "ReadTxnByAcct",
           template: "transactions",
           op: "find",
           params: {
             filter: { accountId: { "%dictionary": { name: "accountIds" } } },
             sort: { "transactionDetails.postDate": -1 },
-            limit: 50
+            limit: 20
           }
         },
         {
-          name: "Aggregate transactions amount by accountId",
-          template: "transactions",
-          op: "aggregate",
-          params: {
-            pipeline: [
-              { "$match": { accountId: { "%dictionary": { name: "accountIds" } } } },
-              {
-                "$group": {
-                  _id: "$accountId",
-                  totalAmount: { "$sum": "$transactionDetails.amount" },
-                  txnCount: { "$sum": 1 }
-                }
-              },
-              { "$limit": 100 }
-            ]
-          }
-        },
-        {
-          name: "Read collections by accountId",
+          name: "ReadCollByAcct",
           template: "collections",
           op: "find",
           params: {
             filter: { accountId: { "%dictionary": { name: "accountIds" } } },
             limit: 20
           }
-        },
-        {
-          name: "Aggregate collections delinquent amount by accountId",
-          template: "collections",
-          op: "aggregate",
-          params: {
-            pipeline: [
-              { "$match": { accountId: { "%dictionary": { name: "accountIds" } } } },
-              {
-                "$group": {
-                  _id: "$accountId",
-                  totalDelinquentAmount: { "$sum": "$delinquency.delinquentAmount" },
-                  collCount: { "$sum": 1 }
-                }
-              },
-              { "$limit": 100 }
-            ]
-          }
         }
       ];
-
-    def effectiveReadDefs:
-      if $disableAggregates == 1 then
-        readDefs | map(select(.op != "aggregate"))
-      else
-        readDefs
-      end;
 
     def writeDefs:
       [
         {
-          name: "Insert accounts",
+          name: "InsAcct",
           template: "accounts",
           op: "insert"
         },
         {
-          name: "Update one account",
+          name: "UpdAcct",
           template: "accounts",
           op: "updateOne",
           params: {
@@ -428,7 +387,7 @@ jq -n \
           }
         },
         {
-          name: "Delete one account",
+          name: "DelAcct",
           template: "accounts",
           op: "deleteOne",
           params: {
@@ -436,12 +395,12 @@ jq -n \
           }
         },
         {
-          name: "Insert transactions",
+          name: "InsTxn",
           template: "transactions",
           op: "insert"
         },
         {
-          name: "Update one transaction",
+          name: "UpdTxn",
           template: "transactions",
           op: "updateOne",
           params: {
@@ -459,7 +418,7 @@ jq -n \
           }
         },
         {
-          name: "Delete one transaction",
+          name: "DelTxn",
           template: "transactions",
           op: "deleteOne",
           params: {
@@ -467,12 +426,12 @@ jq -n \
           }
         },
         {
-          name: "Insert collections",
+          name: "InsColl",
           template: "collections",
           op: "insert"
         },
         {
-          name: "Update one collections record",
+          name: "UpdColl",
           template: "collections",
           op: "updateOne",
           params: {
@@ -490,7 +449,7 @@ jq -n \
           }
         },
         {
-          name: "Delete one collections record",
+          name: "DelColl",
           template: "collections",
           op: "deleteOne",
           params: {
@@ -516,6 +475,42 @@ jq -n \
                   }
                 }
               }
+            elif .name == "transactions" then
+              . + {
+                dictionaries: ((.dictionaries // {}) + {
+                  transactionIds: {
+                    type: "collection",
+                    db: .database,
+                    collection: .collection,
+                    query: {},
+                    limit: 1000000,
+                    attribute: "transactionId"
+                  }
+                })
+              }
+            elif .name == "collections" then
+              . + {
+                dictionaries: ((.dictionaries // {}) + {
+                  collectionIds: {
+                    type: "collection",
+                    db: .database,
+                    collection: .collection,
+                    query: {},
+                    limit: 1000000,
+                    attribute: "collectionId"
+                  }
+                })
+              }
+            else
+              .
+            end
+          )
+      ) as $templates
+    | (
+        $templates
+        | map(
+            if .dictionaries? then
+              .dictionaries |= with_entries(.value |= (. + { limit: 5000000 }))
             else
               .
             end
@@ -523,11 +518,11 @@ jq -n \
       ) as $templates
     | (
         if $mode == "read" then
-          distribute($readPool; effectiveReadDefs)
+          distribute($readPool; readDefs)
         elif $mode == "write" then
           distribute($writePool; writeDefs)
         else
-          distribute($readPool; effectiveReadDefs) + distribute($writePool; writeDefs)
+          distribute($readPool; readDefs) + distribute($writePool; writeDefs)
         end
         | map(withTiming)
       ) as $workloads
