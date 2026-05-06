@@ -16,6 +16,7 @@ Options:
   --mode MODE         Workload mode: read | write | mixed (default: mixed)
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
+  --dict-limit N      Max entries to preload per dictionary (default: 500000, max: 5000000)
   --disable-aggregates Exclude aggregate workloads from generated test config
   --duration-ms N     Global stopAfterDuration in milliseconds
   --duration-read-ms N  Read workload stopAfterDuration override in milliseconds
@@ -36,6 +37,7 @@ The SimRunner.jar path can also be supplied via the SIMRUNNER_JAR environment va
 
 Examples:
   ./run-workloads.sh --mode write --threads 18 /path/to/SimRunner.jar
+  ./run-workloads.sh --mode mixed --threads 40 --dict-limit 200000 /path/to/SimRunner.jar
   ./run-workloads.sh --mode read --threads 12 --dry-run
   ./run-workloads.sh --mode mixed --read-pct 70 --threads 20 /path/to/SimRunner.jar
   ./run-workloads.sh --mode mixed --read-pct 70 --threads 20 --disable-aggregates /path/to/SimRunner.jar
@@ -51,6 +53,7 @@ MODE="mixed"
 READ_PCT=50
 TOTAL_THREADS=12
 BASE_CONFIG=""
+DICT_LIMIT=500000
 DISABLE_AGGREGATES=0
 DURATION_MS=""
 DURATION_READ_MS=""
@@ -91,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --mode)         MODE="$2"; shift 2 ;;
     --read-pct)     READ_PCT="$2"; shift 2 ;;
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
+    --dict-limit)   DICT_LIMIT="$2"; shift 2 ;;
     --disable-aggregates) DISABLE_AGGREGATES=1; shift ;;
     --duration-ms)       DURATION_MS="$2"; shift 2 ;;
     --duration-read-ms)  DURATION_READ_MS="$2"; shift 2 ;;
@@ -136,6 +140,16 @@ fi
 
 if ! is_positive_int "${TOTAL_THREADS}"; then
   echo "Error: --threads must be a positive integer. Got: ${TOTAL_THREADS}"
+  exit 1
+fi
+
+if ! is_positive_int "${DICT_LIMIT}"; then
+  echo "Error: --dict-limit must be a positive integer. Got: ${DICT_LIMIT}"
+  exit 1
+fi
+
+if [[ "${DICT_LIMIT}" -gt 5000000 ]]; then
+  echo "Error: --dict-limit exceeds max allowed value (5000000). Got: ${DICT_LIMIT}"
   exit 1
 fi
 
@@ -241,6 +255,7 @@ jq -n \
   --arg mode "${MODE}" \
   --argjson readPool "${READ_POOL}" \
   --argjson writePool "${WRITE_POOL}" \
+  --argjson dictLimit "${DICT_LIMIT}" \
   --argjson disableAggregates "${DISABLE_AGGREGATES}" \
   --argjson durationMs "$(json_or_null "${DURATION_MS}")" \
   --argjson durationReadMs "$(json_or_null "${DURATION_READ_MS}")" \
@@ -470,7 +485,7 @@ jq -n \
                     db: .database,
                     collection: .collection,
                     query: {},
-                    limit: 1000000,
+                    limit: $dictLimit,
                     attribute: "accountId"
                   }
                 }
@@ -483,7 +498,7 @@ jq -n \
                     db: .database,
                     collection: .collection,
                     query: {},
-                    limit: 1000000,
+                    limit: $dictLimit,
                     attribute: "transactionId"
                   }
                 })
@@ -496,7 +511,7 @@ jq -n \
                     db: .database,
                     collection: .collection,
                     query: {},
-                    limit: 1000000,
+                    limit: $dictLimit,
                     attribute: "collectionId"
                   }
                 })
@@ -510,7 +525,7 @@ jq -n \
         $templates
         | map(
             if .dictionaries? then
-              .dictionaries |= with_entries(.value |= (. + { limit: 5000000 }))
+              .dictionaries |= with_entries(.value |= (. + { limit: $dictLimit }))
             else
               .
             end
@@ -537,7 +552,7 @@ jq -n \
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "==> Generated workload config: ${TEST_CONFIG}"
-  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}"
+  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}"
   echo
   jq '{workloads: [.workloads[] | {name, op, template, threads, pace, stopAfterDuration}]}' "${TEST_CONFIG}"
   echo
@@ -546,6 +561,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 fi
 
 echo "==> Generated workload config: ${TEST_CONFIG}"
-echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}"
+echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}"
+echo "==> Starting SimRunner (initial dictionary preload may take time for large dict limits)"
 echo "==> Running test workloads (${TEST_CONFIG})"
 java -jar "${JAR_PATH}" "${TEST_CONFIG}"
