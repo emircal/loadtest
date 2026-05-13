@@ -17,7 +17,7 @@ Options:
   --mode MODE         Workload mode: read | write | mixed (default: mixed)
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
-  --dict-limit N      Max entries to preload per dictionary (default: 500000, max: 5000000)
+  --dict-limit N      Max values to preload per remembered field (default: 500000, max: 5000000)
   --disable-aggregates Exclude aggregate workloads from generated test config
   --disable-account-reads Exclude ReadTxnByAcct and ReadCollByAcct workloads
   --duration-ms N     Global stopAfterDuration in milliseconds
@@ -343,9 +343,8 @@ jq -n \
           name: "ReadAcctById",
           template: "accounts",
           op: "find",
-          dictionaries: ["accountIds"],
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { accountId: "#accountId" },
             limit: 1
           }
         },
@@ -353,11 +352,11 @@ jq -n \
           name: "ReadTxnById",
           template: "transactions",
           op: "find",
-          dictionaries: ["accountIds", "transactionIds"],
+          variables: { txnKey: "#txnKey" },
           params: {
             filter: {
-              accountId: { "%dictionary": { name: "accountIds" } },
-              transactionId: { "%dictionary": { name: "transactionIds" } }
+              accountId: "#txnKey.accountId",
+              transactionId: "#txnKey.transactionId"
             },
             limit: 1
           }
@@ -366,11 +365,11 @@ jq -n \
           name: "ReadCollById",
           template: "collections",
           op: "find",
-          dictionaries: ["accountIds", "collectionIds"],
+          variables: { collKey: "#collKey" },
           params: {
             filter: {
-              accountId: { "%dictionary": { name: "accountIds" } },
-              collectionId: { "%dictionary": { name: "collectionIds" } }
+              accountId: "#collKey.accountId",
+              collectionId: "#collKey.collectionId"
             },
             limit: 1
           }
@@ -379,9 +378,8 @@ jq -n \
           name: "ReadTxnByAcct",
           template: "transactions",
           op: "find",
-          dictionaries: ["accountIds"],
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { accountId: "#accountId" },
             sort: { "transactionDetails.postDate": -1 },
             limit: 20
           }
@@ -390,9 +388,8 @@ jq -n \
           name: "ReadCollByAcct",
           template: "collections",
           op: "find",
-          dictionaries: ["accountIds"],
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { accountId: "#accountId" },
             limit: 20
           }
         }
@@ -408,16 +405,14 @@ jq -n \
         {
           name: "InsAcct",
           template: "accounts",
-          op: "insert",
-          dictionaries: ["accountIds"]
+          op: "insert"
         },
         {
           name: "UpdAcct",
           template: "accounts",
           op: "updateOne",
-          dictionaries: ["accountIds"],
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
+            filter: { accountId: "#accountId" },
             update: {
               "$set": {
                 "balances.currentBalance": { "%decimal": { min: 0, max: 15000 } },
@@ -438,26 +433,24 @@ jq -n \
           name: "DelAcct",
           template: "accounts",
           op: "deleteOne",
-          dictionaries: ["accountIds"],
           params: {
-            filter: { accountId: { "%dictionary": { name: "accountIds" } } }
+            filter: { accountId: "#accountId" }
           }
         },
         {
           name: "InsTxn",
           template: "transactions",
-          op: "insert",
-          dictionaries: ["accountIds"]
+          op: "insert"
         },
         {
           name: "UpdTxn",
           template: "transactions",
           op: "updateOne",
-          dictionaries: ["accountIds", "transactionIds"],
+          variables: { txnKey: "#txnKey" },
           params: {
             filter: {
-              accountId: { "%dictionary": { name: "accountIds" } },
-              transactionId: { "%dictionary": { name: "transactionIds" } }
+              accountId: "#txnKey.accountId",
+              transactionId: "#txnKey.transactionId"
             },
             update: {
               "$set": {
@@ -475,29 +468,28 @@ jq -n \
           name: "DelTxn",
           template: "transactions",
           op: "deleteOne",
-          dictionaries: ["accountIds", "transactionIds"],
+          variables: { txnKey: "#txnKey" },
           params: {
             filter: {
-              accountId: { "%dictionary": { name: "accountIds" } },
-              transactionId: { "%dictionary": { name: "transactionIds" } }
+              accountId: "#txnKey.accountId",
+              transactionId: "#txnKey.transactionId"
             }
           }
         },
         {
           name: "InsColl",
           template: "collections",
-          op: "insert",
-          dictionaries: ["accountIds"]
+          op: "insert"
         },
         {
           name: "UpdColl",
           template: "collections",
           op: "updateOne",
-          dictionaries: ["accountIds", "collectionIds"],
+          variables: { collKey: "#collKey" },
           params: {
             filter: {
-              accountId: { "%dictionary": { name: "accountIds" } },
-              collectionId: { "%dictionary": { name: "collectionIds" } }
+              accountId: "#collKey.accountId",
+              collectionId: "#collKey.collectionId"
             },
             update: {
               "$set": {
@@ -515,11 +507,11 @@ jq -n \
           name: "DelColl",
           template: "collections",
           op: "deleteOne",
-          dictionaries: ["accountIds", "collectionIds"],
+          variables: { collKey: "#collKey" },
           params: {
             filter: {
-              accountId: { "%dictionary": { name: "accountIds" } },
-              collectionId: { "%dictionary": { name: "collectionIds" } }
+              accountId: "#collKey.accountId",
+              collectionId: "#collKey.collectionId"
             }
           }
         }
@@ -539,73 +531,50 @@ jq -n \
     | (
         $baseTemplates
         | map(
-            . as $template
-            | (
-                $workloads
-                | map(select(.template == $template.name) | (.dictionaries // []))
-                | add // []
-                | unique) as $neededDictionaries
-            | if ($neededDictionaries | length) == 0 then
-                del(.dictionaries)
-              else
-                . + {
-                  dictionaries: (
-                    if $template.name == "accounts" then
-                      {
-                        accountIds: {
-                          type: "collection",
-                          db: .database,
-                          collection: .collection,
-                          query: {},
-                          limit: $dictLimit,
-                          attribute: "accountId"
-                        }
-                      }
-                    elif $template.name == "transactions" then
-                      {
-                        accountIds: {
-                          type: "collection",
-                          db: .database,
-                          collection: .collection,
-                          query: {},
-                          limit: $dictLimit,
-                          attribute: "accountId"
-                        },
-                        transactionIds: {
-                          type: "collection",
-                          db: .database,
-                          collection: .collection,
-                          query: {},
-                          limit: $dictLimit,
-                          attribute: "transactionId"
-                        }
-                      }
-                    elif $template.name == "collections" then
-                      {
-                        accountIds: {
-                          type: "collection",
-                          db: .database,
-                          collection: .collection,
-                          query: {},
-                          limit: $dictLimit,
-                          attribute: "accountId"
-                        },
-                        collectionIds: {
-                          type: "collection",
-                          db: .database,
-                          collection: .collection,
-                          query: {},
-                          limit: $dictLimit,
-                          attribute: "collectionId"
-                        }
-                      }
-                    else
-                      {}
-                    end
-                    | with_entries(select(.key as $key | $neededDictionaries | index($key)))
-                  )
+            if .name == "accounts" then
+              del(.dictionaries)
+              | . + {
+                  remember: [
+                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit }
+                  ]
                 }
-              end
+            elif .name == "transactions" then
+              . + {
+                  dictionaries: {
+                    accountIds: {
+                      type: "collection",
+                      db: .database,
+                      collection: .collection,
+                      query: {},
+                      limit: $dictLimit,
+                      attribute: "accountId"
+                    }
+                  },
+                  remember: [
+                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit },
+                    { compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit }
+                  ]
+                }
+            elif .name == "collections" then
+              . + {
+                  dictionaries: {
+                    accountIds: {
+                      type: "collection",
+                      db: .database,
+                      collection: .collection,
+                      query: {},
+                      limit: $dictLimit,
+                      attribute: "accountId"
+                    }
+                  },
+                  remember: [
+                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit },
+                    { compound: ["accountId", "collectionId"], name: "collKey", preload: true, number: $dictLimit }
+                  ]
+                }
+            else
+              .
+            end
           )
       ) as $templates
     | {
@@ -629,6 +598,6 @@ fi
 
 echo "==> Generated workload config: ${TEST_CONFIG}"
 echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}"
-echo "==> Starting SimRunner (initial dictionary preload may take time for large dict limits)"
+echo "==> Starting SimRunner (initial remembered-value preload may take time for large dict limits)"
 echo "==> Running test workloads (${TEST_CONFIG})"
 java -jar "${JAR_PATH}" "${TEST_CONFIG}"
