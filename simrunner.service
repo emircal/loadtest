@@ -1,0 +1,17 @@
+[Unit]
+Description=SimRunner Data Seeding
+After=network.target
+
+[Service]
+Type=simple
+RemainAfterExit=no
+WorkingDirectory=/opt/SimRunner/loadtest/loadtest-main
+EnvironmentFile=/opt/SimRunner/loadtest/loadtest-main/simrunner.env
+ExecStart=/opt/SimRunner/loadtest/loadtest-main/seed-data.sh
+TimeoutStartSec=infinity
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -13,6 +13,7 @@ Usage:
 
 Options:
   --harness-dir DIR   Directory containing generated configs (default: harness)
+  --connection-string URI MongoDB connection string to write into generated test.json
   --mode MODE         Workload mode: read | write | mixed (default: mixed)
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
@@ -50,6 +51,7 @@ EOF
 HARNESS_DIR="harness"
 JAR_PATH="${SIMRUNNER_JAR:-}"
 DRY_RUN=0
+CONNECTION_STRING=""
 MODE="mixed"
 READ_PCT=50
 TOTAL_THREADS=12
@@ -93,6 +95,7 @@ is_percent_int() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --harness-dir)  HARNESS_DIR="$2"; shift 2 ;;
+    --connection-string) CONNECTION_STRING="$2"; shift 2 ;;
     --mode)         MODE="$2"; shift 2 ;;
     --read-pct)     READ_PCT="$2"; shift 2 ;;
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
@@ -279,6 +282,7 @@ jq -n \
   --argjson paceInsertMs "$(json_or_null "${PACE_INSERT_MS}")" \
   --argjson paceUpdateMs "$(json_or_null "${PACE_UPDATE_MS}")" \
   --argjson paceDeleteMs "$(json_or_null "${PACE_DELETE_MS}")" \
+  --arg connectionString "${CONNECTION_STRING}" \
   --slurpfile base "${BASE_CONFIG}" \
   '
     def distribute($total; $items):
@@ -339,6 +343,7 @@ jq -n \
           name: "ReadAcctById",
           template: "accounts",
           op: "find",
+          dictionaries: ["accountIds"],
           params: {
             filter: { accountId: { "%dictionary": { name: "accountIds" } } },
             limit: 1
@@ -348,8 +353,12 @@ jq -n \
           name: "ReadTxnById",
           template: "transactions",
           op: "find",
+          dictionaries: ["accountIds", "transactionIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "transactionDocIds" } } },
+            filter: {
+              accountId: { "%dictionary": { name: "accountIds" } },
+              transactionId: { "%dictionary": { name: "transactionIds" } }
+            },
             limit: 1
           }
         },
@@ -357,8 +366,12 @@ jq -n \
           name: "ReadCollById",
           template: "collections",
           op: "find",
+          dictionaries: ["accountIds", "collectionIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "collectionDocIds" } } },
+            filter: {
+              accountId: { "%dictionary": { name: "accountIds" } },
+              collectionId: { "%dictionary": { name: "collectionIds" } }
+            },
             limit: 1
           }
         },
@@ -366,6 +379,7 @@ jq -n \
           name: "ReadTxnByAcct",
           template: "transactions",
           op: "find",
+          dictionaries: ["accountIds"],
           params: {
             filter: { accountId: { "%dictionary": { name: "accountIds" } } },
             sort: { "transactionDetails.postDate": -1 },
@@ -376,6 +390,7 @@ jq -n \
           name: "ReadCollByAcct",
           template: "collections",
           op: "find",
+          dictionaries: ["accountIds"],
           params: {
             filter: { accountId: { "%dictionary": { name: "accountIds" } } },
             limit: 20
@@ -393,14 +408,16 @@ jq -n \
         {
           name: "InsAcct",
           template: "accounts",
-          op: "insert"
+          op: "insert",
+          dictionaries: ["accountIds"]
         },
         {
           name: "UpdAcct",
           template: "accounts",
           op: "updateOne",
+          dictionaries: ["accountIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "accountDocIds" } } },
+            filter: { accountId: { "%dictionary": { name: "accountIds" } } },
             update: {
               "$set": {
                 "balances.currentBalance": { "%decimal": { min: 0, max: 15000 } },
@@ -421,21 +438,27 @@ jq -n \
           name: "DelAcct",
           template: "accounts",
           op: "deleteOne",
+          dictionaries: ["accountIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "accountDocIds" } } }
+            filter: { accountId: { "%dictionary": { name: "accountIds" } } }
           }
         },
         {
           name: "InsTxn",
           template: "transactions",
-          op: "insert"
+          op: "insert",
+          dictionaries: ["accountIds"]
         },
         {
           name: "UpdTxn",
           template: "transactions",
           op: "updateOne",
+          dictionaries: ["accountIds", "transactionIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "transactionDocIds" } } },
+            filter: {
+              accountId: { "%dictionary": { name: "accountIds" } },
+              transactionId: { "%dictionary": { name: "transactionIds" } }
+            },
             update: {
               "$set": {
                 "audit.rts": "%now",
@@ -452,21 +475,30 @@ jq -n \
           name: "DelTxn",
           template: "transactions",
           op: "deleteOne",
+          dictionaries: ["accountIds", "transactionIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "transactionDocIds" } } }
+            filter: {
+              accountId: { "%dictionary": { name: "accountIds" } },
+              transactionId: { "%dictionary": { name: "transactionIds" } }
+            }
           }
         },
         {
           name: "InsColl",
           template: "collections",
-          op: "insert"
+          op: "insert",
+          dictionaries: ["accountIds"]
         },
         {
           name: "UpdColl",
           template: "collections",
           op: "updateOne",
+          dictionaries: ["accountIds", "collectionIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "collectionDocIds" } } },
+            filter: {
+              accountId: { "%dictionary": { name: "accountIds" } },
+              collectionId: { "%dictionary": { name: "collectionIds" } }
+            },
             update: {
               "$set": {
                 "workflow.lastActionCode": {
@@ -483,106 +515,101 @@ jq -n \
           name: "DelColl",
           template: "collections",
           op: "deleteOne",
+          dictionaries: ["accountIds", "collectionIds"],
           params: {
-            filter: { _id: { "%dictionary": { name: "collectionDocIds" } } }
+            filter: {
+              accountId: { "%dictionary": { name: "accountIds" } },
+              collectionId: { "%dictionary": { name: "collectionIds" } }
+            }
           }
         }
       ];
 
-    ($base[0].templates) as $baseTemplates
+    (
+      if $mode == "read" then
+        distribute($readPool; readDefs)
+      elif $mode == "write" then
+        distribute($writePool; writeDefs)
+      else
+        distribute($readPool; readDefs) + distribute($writePool; writeDefs)
+      end
+      | map(withTiming)
+    ) as $workloads
+    | ($base[0].templates) as $baseTemplates
     | (
         $baseTemplates
         | map(
-            if .name == "accounts" then
-              . + {
-                dictionaries: {
-                  accountIds: {
-                    type: "collection",
-                    db: .database,
-                    collection: .collection,
-                    query: {},
-                    limit: $dictLimit,
-                    attribute: "accountId"
-                  },
-                  accountDocIds: {
-                    type: "collection",
-                    db: .database,
-                    collection: .collection,
-                    query: {},
-                    limit: $dictLimit,
-                    attribute: "_id"
-                  }
+            . as $template
+            | (
+                $workloads
+                | map(select(.template == $template.name) | (.dictionaries // []))
+                | add // []
+                | unique) as $neededDictionaries
+            | if ($neededDictionaries | length) == 0 then
+                del(.dictionaries)
+              else
+                . + {
+                  dictionaries: (
+                    if $template.name == "accounts" then
+                      {
+                        accountIds: {
+                          type: "collection",
+                          db: .database,
+                          collection: .collection,
+                          query: {},
+                          limit: $dictLimit,
+                          attribute: "accountId"
+                        }
+                      }
+                    elif $template.name == "transactions" then
+                      {
+                        accountIds: {
+                          type: "collection",
+                          db: .database,
+                          collection: .collection,
+                          query: {},
+                          limit: $dictLimit,
+                          attribute: "accountId"
+                        },
+                        transactionIds: {
+                          type: "collection",
+                          db: .database,
+                          collection: .collection,
+                          query: {},
+                          limit: $dictLimit,
+                          attribute: "transactionId"
+                        }
+                      }
+                    elif $template.name == "collections" then
+                      {
+                        accountIds: {
+                          type: "collection",
+                          db: .database,
+                          collection: .collection,
+                          query: {},
+                          limit: $dictLimit,
+                          attribute: "accountId"
+                        },
+                        collectionIds: {
+                          type: "collection",
+                          db: .database,
+                          collection: .collection,
+                          query: {},
+                          limit: $dictLimit,
+                          attribute: "collectionId"
+                        }
+                      }
+                    else
+                      {}
+                    end
+                    | with_entries(select(.key as $key | $neededDictionaries | index($key)))
+                  )
                 }
-              }
-            elif .name == "transactions" then
-              . + {
-                dictionaries: ((.dictionaries // {}) + {
-                  transactionIds: {
-                    type: "collection",
-                    db: .database,
-                    collection: .collection,
-                    query: {},
-                    limit: $dictLimit,
-                    attribute: "transactionId"
-                  },
-                  transactionDocIds: {
-                    type: "collection",
-                    db: .database,
-                    collection: .collection,
-                    query: {},
-                    limit: $dictLimit,
-                    attribute: "_id"
-                  }
-                })
-              }
-            elif .name == "collections" then
-              . + {
-                dictionaries: ((.dictionaries // {}) + {
-                  collectionIds: {
-                    type: "collection",
-                    db: .database,
-                    collection: .collection,
-                    query: {},
-                    limit: $dictLimit,
-                    attribute: "collectionId"
-                  },
-                  collectionDocIds: {
-                    type: "collection",
-                    db: .database,
-                    collection: .collection,
-                    query: {},
-                    limit: $dictLimit,
-                    attribute: "_id"
-                  }
-                })
-              }
-            else
-              .
-            end
+              end
           )
       ) as $templates
-    | (
-        $templates
-        | map(
-            if .dictionaries? then
-              .dictionaries |= with_entries(.value |= (. + { limit: $dictLimit }))
-            else
-              .
-            end
-          )
-      ) as $templates
-    | (
-        if $mode == "read" then
-          distribute($readPool; readDefs)
-        elif $mode == "write" then
-          distribute($writePool; writeDefs)
-        else
-          distribute($readPool; readDefs) + distribute($writePool; writeDefs)
-        end
-        | map(withTiming)
-      ) as $workloads
     | {
-        connectionString: $base[0].connectionString,
+      connectionString: (if $connectionString != "" then $connectionString else $base[0].connectionString end),
         reportInterval: ($base[0].reportInterval // 10000),
         http: ($base[0].http // {enabled: false, port: 3000, host: "localhost"}),
         templates: $templates,
