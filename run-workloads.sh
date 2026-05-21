@@ -17,7 +17,7 @@ Options:
   --mode MODE         Workload mode: read | write | mixed (default: mixed)
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
-  --dict-limit N      Max values to preload per remembered field (default: 500000, max: 5000000)
+  --dict-limit N      Max values to preload per remembered field (default: 100000, max: 5000000)
   --disable-aggregates Exclude aggregate workloads from generated test config
   --disable-account-reads Exclude ReadTxnByAcct and ReadCollByAcct workloads
   --duration-ms N     Global stopAfterDuration in milliseconds
@@ -56,7 +56,7 @@ MODE="mixed"
 READ_PCT=50
 TOTAL_THREADS=12
 BASE_CONFIG=""
-DICT_LIMIT=500000
+DICT_LIMIT=100000
 DISABLE_AGGREGATES=0
 DISABLE_ACCOUNT_READS=0
 DURATION_MS=""
@@ -200,7 +200,9 @@ cd "${SCRIPT_DIR}"
 TEST_CONFIG="${HARNESS_DIR}/test.json"
 
 if [[ -z "${BASE_CONFIG}" ]]; then
-  if [[ -f "${HARNESS_DIR}/seed-accounts-site-1.json" ]]; then
+  if [[ -f "${HARNESS_DIR}/seed-site-1.json" ]]; then
+    BASE_CONFIG="${HARNESS_DIR}/seed-site-1.json"
+  elif [[ -f "${HARNESS_DIR}/seed-accounts-site-1.json" ]]; then
     BASE_CONFIG="${HARNESS_DIR}/seed-accounts-site-1.json"
   elif [[ -f "simrunner-seed-paced.json" ]]; then
     BASE_CONFIG="simrunner-seed-paced.json"
@@ -440,7 +442,8 @@ jq -n \
         {
           name: "InsTxn",
           template: "transactions",
-          op: "insert"
+          op: "insert",
+          variables: { batchAccountId: "#accountId" }
         },
         {
           name: "UpdTxn",
@@ -479,7 +482,8 @@ jq -n \
         {
           name: "InsColl",
           template: "collections",
-          op: "insert"
+          op: "insert",
+          variables: { batchAccountId: "#accountId" }
         },
         {
           name: "UpdColl",
@@ -532,41 +536,29 @@ jq -n \
         $baseTemplates
         | map(
             if .name == "accounts" then
-              del(.dictionaries)
+              del(.variables)
+              | del(.dictionaries)
+              | .template.accountId = { "%stringTemplate": { template: "&&&&&&&&&&&&&&&&" } }
               | . + {
                   remember: [
                     { field: "accountId", name: "accountId", preload: true, number: $dictLimit }
                   ]
                 }
             elif .name == "transactions" then
-              . + {
-                  dictionaries: {
-                    accountIds: {
-                      type: "collection",
-                      db: .database,
-                      collection: .collection,
-                      query: {},
-                      limit: $dictLimit,
-                      attribute: "accountId"
-                    }
-                  },
+              del(.variables)
+              | del(.dictionaries)
+              | .template.accountId = "#batchAccountId"
+              | . + {
                   remember: [
                     { field: "accountId", name: "accountId", preload: true, number: $dictLimit },
                     { compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit }
                   ]
                 }
             elif .name == "collections" then
-              . + {
-                  dictionaries: {
-                    accountIds: {
-                      type: "collection",
-                      db: .database,
-                      collection: .collection,
-                      query: {},
-                      limit: $dictLimit,
-                      attribute: "accountId"
-                    }
-                  },
+              del(.variables)
+              | del(.dictionaries)
+              | .template.accountId = "#batchAccountId"
+              | . + {
                   remember: [
                     { field: "accountId", name: "accountId", preload: true, number: $dictLimit },
                     { compound: ["accountId", "collectionId"], name: "collKey", preload: true, number: $dictLimit }

@@ -38,6 +38,7 @@
 
   ensureIndex(targetDb.accounts, { accountId: 1 }, { name: 'accountId_1' });
   ensureIndex(targetDb.transactions, { accountId: 1, transactionId: 1 }, { name: 'accountId_1_transactionId_1' });
+  ensureIndex(targetDb.transactions, { accountId: 1, 'transactionDetails.postDate': -1 }, { name: 'accountId_1_postDate_-1' });
   ensureIndex(targetDb.collections, { accountId: 1, collectionId: 1 }, { name: 'accountId_1_collectionId_1' });
 
   runAdmin({ enableSharding: dbName }, ['already enabled']);
@@ -45,35 +46,35 @@
   runAdmin({ shardCollection: `${dbName}.transactions`, key: { accountId: 1, transactionId: 1 } }, ['already sharded']);
   runAdmin({ shardCollection: `${dbName}.collections`, key: { accountId: 1, collectionId: 1 } }, ['already sharded']);
 
-  const splitPoints = buildAccountBoundaries(shardNames.length, sites);
-  print(`Using ${splitPoints.length} split point(s) to distribute data across ${shardNames.length} shard(s).`);
+  const splitPrefixes = buildShardPrefixBoundaries(shardNames.length);
+  print(`Using ${splitPrefixes.length} split point(s) to distribute data across ${shardNames.length} shard(s).`);
 
   preSplitAndDistribute({
     namespace: `${dbName}.accounts`,
-    splitPoints: splitPoints.map((accountId) => ({ accountId })),
+    splitPoints: splitPrefixes.map((prefix) => ({ accountId: prefix })),
     chunkStarts: [
       { accountId: MinKey },
-      ...splitPoints.map((accountId) => ({ accountId }))
+      ...splitPrefixes.map((prefix) => ({ accountId: prefix }))
     ],
     shardNames
   });
 
   preSplitAndDistribute({
     namespace: `${dbName}.transactions`,
-    splitPoints: splitPoints.map((accountId) => ({ accountId, transactionId: MinKey })),
+    splitPoints: splitPrefixes.map((prefix) => ({ accountId: prefix, transactionId: MinKey })),
     chunkStarts: [
       { accountId: MinKey, transactionId: MinKey },
-      ...splitPoints.map((accountId) => ({ accountId, transactionId: MinKey }))
+      ...splitPrefixes.map((prefix) => ({ accountId: prefix, transactionId: MinKey }))
     ],
     shardNames
   });
 
   preSplitAndDistribute({
     namespace: `${dbName}.collections`,
-    splitPoints: splitPoints.map((accountId) => ({ accountId, collectionId: MinKey })),
+    splitPoints: splitPrefixes.map((prefix) => ({ accountId: prefix, collectionId: MinKey })),
     chunkStarts: [
       { accountId: MinKey, collectionId: MinKey },
-      ...splitPoints.map((accountId) => ({ accountId, collectionId: MinKey }))
+      ...splitPrefixes.map((prefix) => ({ accountId: prefix, collectionId: MinKey }))
     ],
     shardNames
   });
@@ -172,42 +173,19 @@ function runAdmin(command, ignorableMessageParts) {
   throw new Error(`Admin command failed ${tojson(command)}: ${message}`);
 }
 
-function buildAccountBoundaries(shardCount, sites) {
+// Generates shardCount-1 shard-prefix split points: ["SHD1_", "SHD2_", ..., "SHD{N-1}_"].
+// accountIds use the format "SHD{seq%S}_S{site}_{seq}" so each prefix bucket maps
+// deterministically to one shard, avoiding hot-shard write concentration.
+// Supports up to 9 shards (single-digit prefix keeps correct string sort order).
+function buildShardPrefixBoundaries(shardCount) {
   if (shardCount <= 1) {
     return [];
   }
-
-  // Generate shardCount-1 split points distributed across sites' key ranges.
-  // Each chunk position (1 to shardCount-1) is placed within the appropriate site's range.
-  //
-  // Example: 3 shards, 1 site (S=1, R=3):
-  //   Chunk positions: 1/3, 2/3 → SITE1_3, SITE1_6
-  //
-  // Example: 3 shards, 2 sites (S=2, R=3):
-  //   Chunk 1/3 lands in SITE1 (0-50% of space) at 2/3 within SITE1 → SITE1_6
-  //   Chunk 2/3 lands in SITE2 (50-100% of space) at 1/3 within SITE2 → SITE2_3
-
-  const points = [];
-
-  for (let chunkIdx = 1; chunkIdx < shardCount; chunkIdx += 1) {
-    // Fraction of total key space at this chunk boundary
-    const fractionOfTotal = chunkIdx / shardCount;
-
-    // Which site does this chunk boundary fall into?
-    // (sites are numbered 1..S, each occupying 1/S of the space)
-    const siteIdx = Math.floor(fractionOfTotal * sites) + 1;
-
-    // Position within that site's key range [0, 1)
-    const siteStart = (siteIdx - 1) / sites;
-    const fractionWithinSite = (fractionOfTotal - siteStart) * sites;
-
-      const digit = Math.floor(fractionWithinSite * 10).toString();
-    const suffix = digit.padEnd(16, digit);
-
-    points.push(`SITE${siteIdx}_${suffix}`);
+  const boundaries = [];
+  for (let k = 1; k < shardCount; k++) {
+    boundaries.push(`SHD${k}_`);
   }
-
-  return points;
+  return boundaries;
 }
 
 function preSplitAndDistribute({ namespace, splitPoints, chunkStarts, shardNames }) {

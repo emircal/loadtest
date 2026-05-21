@@ -18,6 +18,8 @@ Options:
   --collections-ratio R   Collections-to-accounts ratio (default: 0.035)
   --db-name NAME          Database name for generated configs (default: simrunner)
   --sites N               Number of seeding partitions / machines (default: 1)
+  --shards N              Number of MongoDB shards (1-9, default: 1). Used to compute
+                          the shard-prefix in generated accountIds.
   --threads N             Threads for account and transaction insert workloads.
                           Collections always use 1 thread. (default: from base template)
   --batch-size N          Batch size for all seeding workloads.
@@ -32,11 +34,11 @@ Environment variables (fallback when flags are not provided):
   MONGO_URI, NUMBER_ACCOUNTS, TX_PER_ACCOUNT, COLLECTIONS_RATIO
 
 Multi-site seeding:
-  When --sites > 1 the script generates one set of config files per site:
-    seed-accounts-site-1.json, seed-accounts-site-2.json, ...
-    seed-children-site-1.json, seed-children-site-2.json, ...
-  IDs are prefixed with "SITE<N>_" so that sequences from different machines
-  never collide. Run seed-data.sh --site N on each machine with the matching files.
+  When --sites > 1 the script generates one config file per site:
+    seed-site-1.json, seed-site-2.json, ...
+  Each site's accountIds are prefixed with "SHD{shard}_S{site}_" so sequences
+  from different machines never collide and each shard receives a proportional
+  share of writes. Run seed-data.sh --site N on each machine with the matching file.
 EOF
 }
 
@@ -47,6 +49,7 @@ TX_PER_ACCOUNT="${TX_PER_ACCOUNT:-260}"
 COLLECTIONS_RATIO="${COLLECTIONS_RATIO:-0.035}"
 DB_NAME="simrunner"
 SITES=1
+SHARDS=1
 THREADS=""   # empty = use value from base template
 BATCH_SIZE="" # empty = use values from base template
 OUT_DIR="harness"
@@ -63,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --collections-ratio)  COLLECTIONS_RATIO="$2";  shift 2 ;;
     --db-name)            DB_NAME="$2";            shift 2 ;;
     --sites)              SITES="$2";              shift 2 ;;
+    --shards)             SHARDS="$2";             shift 2 ;;
     --threads)            THREADS="$2";            shift 2 ;;
     --batch-size)         BATCH_SIZE="$2";         shift 2 ;;
     --out-dir)            OUT_DIR="$2";            shift 2 ;;
@@ -88,6 +92,9 @@ done
 
 [[ "${SITES}" =~ ^[0-9]+$ && "${SITES}" -gt 0 ]] || \
   { echo "SITES must be a positive integer. Got: ${SITES}"; exit 1; }
+
+[[ "${SHARDS}" =~ ^[1-9]$ ]] || \
+  { echo "SHARDS must be a single digit integer (1-9). Got: ${SHARDS}"; exit 1; }
 
 if [[ -n "${THREADS}" ]]; then
   [[ "${THREADS}" =~ ^[0-9]+$ && "${THREADS}" -gt 0 ]] || \
@@ -145,55 +152,63 @@ ACTUAL_COLLECTIONS=$(( COL_STOP_AFTER * COL_THREADS * COL_BATCH ))
 
 # ── jq filters ────────────────────────────────────────────────────────────────
 #
-# SITE_TRANSFORMS  : applied to both seed configs when a site prefix is in use
-#   • accounts.accountId     : wrapped in %stringConcat to prepend the prefix
-#   • transactions.transactionId prefix token : "TXN"  -> "<prefix>TXN"
-#   • collections.collectionId  prefix token  : "COL-" -> "<prefix>COL-"
+# ACCOUNT_ID_TRANSFORM : applied per-site; injects shard-aware accountId formulas
+#   • accounts.variables   : adds "seq": "%sequence"
+#   • accounts.accountId   : "SHD{seq%S}_S{site}_{seq}" (template variable, per-doc)
+#   • transactions/collections.dictionaries : removed (no DB pre-load needed)
+#   • transactions/collections.accountId   : "SHD{batchSeq%S}_S{site}_{batchSeq}"
+#                                            (workload variable, batch-scoped)
 #
-# DICT_QUERY_TRANSFORM : restricts per-template accountId dictionaries to this site's prefix
+# WORKLOAD_VARS_TRANSFORM : sets batch-level batchSeq on Insert transactions/collections
+#   • batchSeq = %natural(max: ACTUAL_ACCOUNTS) → one random accountId per batch
+#     → entire batch goes to one shard, eliminating per-batch mongos fan-out
 #
 # THREAD_TRANSFORMS : overrides thread counts when --threads was supplied
 #
-# BATCH_TRANSFORMS : overrides batch sizes when --batch-size was supplied
+# BATCH_TRANSFORMS  : overrides batch sizes when --batch-size was supplied
 #
-# PACE_TRANSFORM : removes pacing from seeding workloads
+# PACE_TRANSFORM    : removes pacing from seeding workloads
 #
-# DB_TRANSFORMS : rewrites all database references in the generated configs
+# DB_TRANSFORMS     : rewrites all database references in the generated configs
 #
-# DICT_LIMIT_TRANSFORM : sets the per-template accountId dictionary limits
-#
-SITE_TRANSFORMS='
-  if $sitePrefix != "" then
-    .templates |= map(
-      if .name == "accounts" then
-        .template.accountId = {
-          "%stringConcat": { "of": [$sitePrefix, .template.accountId], "sep": "" }
+ACCOUNT_ID_TRANSFORM='
+  .templates |= map(
+    if .name == "accounts" then
+      .variables = {"seq": "%sequence"}
+      | .template.accountId = {
+          "%stringConcat": {
+            "of": [
+              "SHD",
+              { "%toString": { "of": { "%mod": { "of": "#seq", "by": $shards } } } },
+              ("_S" + ($siteIndex | tostring) + "_"),
+              { "%toString": { "of": "#seq" } }
+            ],
+            "sep": ""
+          }
         }
-      else . end
-    )
-    | .templates |= map(
-      if .name == "transactions" then
-        .template.transactionId["%stringConcat"].of[0] = ($sitePrefix + "TXN")
-      else . end
-    )
-    | .templates |= map(
-      if .name == "collections" then
-        .template.collectionId["%stringConcat"].of[0] = ($sitePrefix + "COL-")
-      else . end
-    )
-  else . end
+    elif (.name == "transactions" or .name == "collections") then
+      del(.dictionaries)
+      | .template.accountId = {
+          "%stringConcat": {
+            "of": [
+              "SHD",
+              { "%toString": { "of": { "%mod": { "of": "#batchSeq", "by": $shards } } } },
+              ("_S" + ($siteIndex | tostring) + "_"),
+              { "%toString": { "of": "#batchSeq" } }
+            ],
+            "sep": ""
+          }
+        }
+    else . end
+  )
 '
 
-DICT_QUERY_TRANSFORM='
-  if $sitePrefix != "" then
-    .templates |= map(
-      if .dictionaries.accountIds? then
-        .dictionaries.accountIds.query = {
-          "accountId": { "$regex": ("^" + $sitePrefix) }
-        }
-      else . end
-    )
-  else . end
+WORKLOAD_VARS_TRANSFORM='
+  .workloads |= map(
+    if (.name == "Insert transactions" or .name == "Insert collections") then
+      .variables = { "batchSeq": { "%natural": { "max": $batchSeqMax } } }
+    else . end
+  )
 '
 
 # Always applied; sets the (possibly overridden) thread counts.
@@ -221,101 +236,51 @@ PACE_TRANSFORM='
 
 DB_TRANSFORMS='
   .templates |= map(.database = $dbName)
-  | .templates |= map(
-      if .dictionaries.accountIds? then
-        .dictionaries.accountIds.db = $dbName
-      else . end
-    )
 '
 
-DICT_LIMIT_TRANSFORM='
-  .templates |= map(
-    if .dictionaries.accountIds? then
-      .dictionaries.accountIds.limit = $dictLimit
-    else . end
-  )
-'
-
-# ── Helper: generate configs for one site ─────────────────────────────────────
+# ── Helper: generate config for one site ──────────────────────────────────────
 gen_site() {
   local site_index="$1"
-  local site_prefix="SITE${site_index}_"
+  local seed_json
 
-  local seed_accounts_json seed_children_json
-
-  seed_accounts_json="$(jq \
-    --arg  uri              "${MONGO_URI}" \
-    --arg  dbName           "${DB_NAME}" \
-    --arg  sitePrefix       "${site_prefix}" \
-    --argjson dictLimit     "${PER_SITE_ACCOUNTS}" \
-    --argjson stopAfter     "${ACCOUNTS_STOP_AFTER}" \
-    --argjson accountsThreads "${ACCOUNTS_THREADS}" \
-    --argjson accountsBatch "${ACCOUNTS_BATCH}" \
-    --argjson txBatch       "${TX_BATCH}" \
-    --argjson colBatch      "${COL_BATCH}" \
-    --argjson txThreads     "${TX_THREADS}" \
-    --argjson colThreads    "${COL_THREADS}" \
+  seed_json="$(jq \
+    --arg  uri                "${MONGO_URI}" \
+    --arg  dbName             "${DB_NAME}" \
+    --argjson siteIndex       "${site_index}" \
+    --argjson shards          "${SHARDS}" \
+    --argjson batchSeqMax     "${ACTUAL_ACCOUNTS}" \
+    --argjson accountsStopAfter "${ACCOUNTS_STOP_AFTER}" \
+    --argjson txStopAfter       "${TX_STOP_AFTER}" \
+    --argjson colStopAfter      "${COL_STOP_AFTER}" \
+    --argjson accountsThreads   "${ACCOUNTS_THREADS}" \
+    --argjson txThreads         "${TX_THREADS}" \
+    --argjson colThreads        "${COL_THREADS}" \
+    --argjson accountsBatch     "${ACCOUNTS_BATCH}" \
+    --argjson txBatch           "${TX_BATCH}" \
+    --argjson colBatch          "${COL_BATCH}" \
     "
       .connectionString = \$uri
       | ${DB_TRANSFORMS}
-      | ${DICT_LIMIT_TRANSFORM}
+      | ${ACCOUNT_ID_TRANSFORM}
+      | ${WORKLOAD_VARS_TRANSFORM}
       | .workloads |= map(
-          if .name == \"Insert accounts\" then
-            .stopAfter = \$stopAfter | del(.pace)
+          if   .name == \"Insert accounts\"     then .stopAfter = \$accountsStopAfter
+          elif .name == \"Insert transactions\" then .stopAfter = \$txStopAfter
+          elif .name == \"Insert collections\"  then .stopAfter = \$colStopAfter
           else . end
-        )
-      | .workloads |= map(select(.name == \"Insert accounts\"))
-      | ${THREAD_TRANSFORMS}
-      | ${BATCH_TRANSFORMS}
-      | ${PACE_TRANSFORM}
-      | ${SITE_TRANSFORMS}
-    " "${SEED_BASE}")"
-
-  seed_children_json="$(jq \
-    --arg  uri              "${MONGO_URI}" \
-    --arg  dbName           "${DB_NAME}" \
-    --arg  sitePrefix       "${site_prefix}" \
-    --argjson dictLimit     "${PER_SITE_ACCOUNTS}" \
-    --argjson txStopAfter   "${TX_STOP_AFTER}" \
-    --argjson colStopAfter  "${COL_STOP_AFTER}" \
-    --argjson accountsThreads "${ACCOUNTS_THREADS}" \
-    --argjson accountsBatch "${ACCOUNTS_BATCH}" \
-    --argjson txBatch       "${TX_BATCH}" \
-    --argjson colBatch      "${COL_BATCH}" \
-    --argjson txThreads     "${TX_THREADS}" \
-    --argjson colThreads    "${COL_THREADS}" \
-    "
-      .connectionString = \$uri
-      | ${DB_TRANSFORMS}
-      | ${DICT_LIMIT_TRANSFORM}
-      | ${DICT_QUERY_TRANSFORM}
-      | .workloads |= map(
-          if .name == \"Insert transactions\" then
-            .stopAfter = \$txStopAfter
-          elif .name == \"Insert collections\" then
-            .stopAfter = \$colStopAfter
-          else . end
-        )
-      | .workloads |= map(
-          select(.name == \"Insert transactions\" or .name == \"Insert collections\")
         )
       | ${THREAD_TRANSFORMS}
       | ${BATCH_TRANSFORMS}
       | ${PACE_TRANSFORM}
-      | ${SITE_TRANSFORMS}
     " "${SEED_BASE}")"
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
-    echo "==> [site ${site_index}] seed-accounts-site-${site_index}.json"
-    echo "${seed_accounts_json}" | jq .
-    echo
-    echo "==> [site ${site_index}] seed-children-site-${site_index}.json"
-    echo "${seed_children_json}" | jq .
+    echo "==> [site ${site_index}] seed-site-${site_index}.json"
+    echo "${seed_json}" | jq .
     echo
   else
-    echo "${seed_accounts_json}" > "${OUT_DIR}/seed-accounts-site-${site_index}.json"
-    echo "${seed_children_json}" > "${OUT_DIR}/seed-children-site-${site_index}.json"
-    echo "    seed-accounts-site-${site_index}.json  seed-children-site-${site_index}.json"
+    echo "${seed_json}" > "${OUT_DIR}/seed-site-${site_index}.json"
+    echo "    seed-site-${site_index}.json"
   fi
 }
 
@@ -347,7 +312,7 @@ echo "    test.json  (shared)"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Seeding parameters  (${SITES} site(s))"
+echo "==> Seeding parameters  (${SITES} site(s), ${SHARDS} shard(s))"
 printf "    %-22s %s\n" "Accounts per site:"  "${PER_SITE_ACCOUNTS}"
 printf "    %-22s %s\n" "TX per account:"     "${TX_PER_ACCOUNT}"
 printf "    %-22s %s\n" "Collections ratio:"  "${COLLECTIONS_RATIO}"
@@ -358,11 +323,3 @@ echo ""
 printf "    %-14s  target=%-12s  actual=%s\n" "accounts"     "${PER_SITE_ACCOUNTS}"    "${ACTUAL_ACCOUNTS}"
 printf "    %-14s  target=%-12s  actual=%s\n" "transactions"  "${TARGET_TRANSACTIONS}"  "${ACTUAL_TRANSACTIONS}"
 printf "    %-14s  target=%-12s  actual=%s\n" "collections"   "${TARGET_COLLECTIONS}"   "${ACTUAL_COLLECTIONS}"
-
-if [[ "${ACTUAL_ACCOUNTS}"     -ne "${PER_SITE_ACCOUNTS}"   ]] ||
-   [[ "${ACTUAL_TRANSACTIONS}"  -ne "${TARGET_TRANSACTIONS}" ]] ||
-   [[ "${ACTUAL_COLLECTIONS}"   -ne "${TARGET_COLLECTIONS}"  ]]; then
-  echo ""
-  echo "    Note: actual totals are rounded up because SimRunner's stopAfter is"
-  echo "    iteration-based and each iteration inserts (threads × batch) documents."
-fi

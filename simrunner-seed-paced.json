@@ -11,10 +11,17 @@
       "name": "accounts",
       "database": "simrunner",
       "collection": "accounts",
+      "variables": {
+        "seq": "%sequence"
+      },
       "template": {
         "accountId": {
-          "%stringTemplate": {
-            "template": "&&&&&&&&&&&&&&&&"
+          "%stringConcat": {
+            "of": [
+              "SHD0_S1_",
+              { "%toString": { "of": "#seq" } }
+            ],
+            "sep": ""
           }
         },
         "presentationId": {
@@ -130,16 +137,6 @@
       "name": "transactions",
       "database": "simrunner",
       "collection": "transactions",
-      "dictionaries": {
-        "accountIds": {
-          "type": "collection",
-          "db": "simrunner",
-          "collection": "accounts",
-          "query": {},
-          "limit": 1000000,
-          "attribute": "accountId"
-        }
-      },
       "template": {
         "transactionId": {
           "%stringConcat": {
@@ -159,8 +156,12 @@
           }
         },
         "accountId": {
-          "%dictionary": {
-            "name": "accountIds"
+          "%stringConcat": {
+            "of": [
+              "SHD0_S1_",
+              { "%toString": { "of": "#batchSeq" } }
+            ],
+            "sep": ""
           }
         },
         "recordType": {
@@ -256,16 +257,6 @@
       "name": "collections",
       "database": "simrunner",
       "collection": "collections",
-      "dictionaries": {
-        "accountIds": {
-          "type": "collection",
-          "db": "simrunner",
-          "collection": "accounts",
-          "query": {},
-          "limit": 1000000,
-          "attribute": "accountId"
-        }
-      },
       "template": {
         "collectionId": {
           "%stringConcat": {
@@ -285,8 +276,12 @@
           }
         },
         "accountId": {
-          "%dictionary": {
-            "name": "accountIds"
+          "%stringConcat": {
+            "of": [
+              "SHD0_S1_",
+              { "%toString": { "of": "#batchSeq" } }
+            ],
+            "sep": ""
           }
         },
         "delinquency": {
@@ -413,7 +408,10 @@
       "template": "transactions",
       "op": "insert",
       "threads": 6,
-      "batch": 650
+      "batch": 650,
+      "variables": {
+        "batchSeq": { "%natural": { "max": 1000000 } }
+      }
     },
     {
       "comment": "Target ~3.5% collections-to-accounts ratio on average (~35 collections/second)",
@@ -421,7 +419,10 @@
       "template": "collections",
       "op": "insert",
       "threads": 1,
-      "batch": 7
+      "batch": 7,
+      "variables": {
+        "batchSeq": { "%natural": { "max": 1000000 } }
+      }
     }
   ]
 }
