@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Executes the data seeding workload for one site.
@@ -14,9 +14,10 @@ Usage:
 
 Options:
   --harness-dir DIR   Directory containing generated configs (default: harness)
-  --site N            Site index to seed (selects seed-site-N.json).
-                      Defaults to 1. Use the value matching this machine's --site
-                      when gen-harness.sh was run with --sites > 1.
+  --site N            Site index for this seeding run (default: 1). Each machine
+                      in a multi-site deployment should use a distinct value.
+                      seed-data.sh injects "_S{N}_" into the accountId prefix
+                      at load time, so accounts from different sites never collide.
   -n, --dry-run       Print resolved config path and exit without running SimRunner.
   -h, --help          Show this help.
 
@@ -53,17 +54,27 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-SEED_CONFIG="${HARNESS_DIR}/seed-site-${SITE_INDEX}.json"
+SEED_TEMPLATE="${HARNESS_DIR}/seed-site.json"
 
-[[ -f "${SEED_CONFIG}" ]] || \
-  { echo "Config not found: ${SEED_CONFIG}  (run gen-harness.sh first)"; exit 1; }
+[[ -f "${SEED_TEMPLATE}" ]] || \
+  { echo "Config not found: ${SEED_TEMPLATE}  (run gen-harness.sh first)"; exit 1; }
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-  echo "==> Dry run: would execute: java -jar <SimRunner.jar> ${SEED_CONFIG}"
+  echo "==> Dry run: would inject sitePfx=_S${SITE_INDEX}_ and execute: java -jar <SimRunner.jar> ${SEED_TEMPLATE}"
   exit 0
 fi
 
-echo "==> Seeding site ${SITE_INDEX} — accounts, transactions, and collections (${SEED_CONFIG})"
+# Inject the site prefix into template variables at load time.
+# gen-harness.sh seeds all templates with sitePfx="_S1_"; we replace it here
+# so accounts/transactions/collections from different machines get distinct prefixes.
+SEED_CONFIG="$(mktemp /tmp/seed-site-XXXXXX.json)"
+trap 'rm -f "${SEED_CONFIG}"' EXIT
+
+jq --arg sitePfx "_S${SITE_INDEX}_" \
+  '.templates |= map(if .variables.sitePfx? then .variables.sitePfx = $sitePfx else . end)' \
+  "${SEED_TEMPLATE}" > "${SEED_CONFIG}"
+
+echo "==> Seeding site ${SITE_INDEX} — accounts, transactions, and collections (${SEED_TEMPLATE})"
 java -jar "${JAR_PATH}" "${SEED_CONFIG}"
 
 echo "==> Seeding complete (site ${SITE_INDEX})."

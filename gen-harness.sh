@@ -17,7 +17,6 @@ Options:
   --tx-per-account N      Transactions per account (default: 260)
   --collections-ratio R   Collections-to-accounts ratio (default: 0.035)
   --db-name NAME          Database name for generated configs (default: simrunner)
-  --sites N               Number of seeding partitions / machines (default: 1)
   --shards N              Number of MongoDB shards (1-9, default: 1). Used to compute
                           the shard-prefix in generated accountIds.
   --threads N             Threads for account and transaction insert workloads.
@@ -34,11 +33,10 @@ Environment variables (fallback when flags are not provided):
   MONGO_URI, NUMBER_ACCOUNTS, TX_PER_ACCOUNT, COLLECTIONS_RATIO
 
 Multi-site seeding:
-  When --sites > 1 the script generates one config file per site:
-    seed-site-1.json, seed-site-2.json, ...
-  Each site's accountIds are prefixed with "SHD{shard}_S{site}_" so sequences
-  from different machines never collide and each shard receives a proportional
-  share of writes. Run seed-data.sh --site N on each machine with the matching file.
+  gen-harness.sh generates a single seed-site.json. Each seeding machine runs:
+    seed-data.sh --site N /path/to/SimRunner.jar
+  seed-data.sh injects the site index into the config at load time, so accounts
+  on different machines get distinct "_S{N}_" prefixes and never collide.
 EOF
 }
 
@@ -48,7 +46,6 @@ NUMBER_ACCOUNTS="${NUMBER_ACCOUNTS:-1000000}"
 TX_PER_ACCOUNT="${TX_PER_ACCOUNT:-260}"
 COLLECTIONS_RATIO="${COLLECTIONS_RATIO:-0.035}"
 DB_NAME="simrunner"
-SITES=1
 SHARDS=1
 THREADS=""   # empty = use value from base template
 BATCH_SIZE="" # empty = use values from base template
@@ -65,7 +62,6 @@ while [[ $# -gt 0 ]]; do
     --tx-per-account)     TX_PER_ACCOUNT="$2";     shift 2 ;;
     --collections-ratio)  COLLECTIONS_RATIO="$2";  shift 2 ;;
     --db-name)            DB_NAME="$2";            shift 2 ;;
-    --sites)              SITES="$2";              shift 2 ;;
     --shards)             SHARDS="$2";             shift 2 ;;
     --threads)            THREADS="$2";            shift 2 ;;
     --batch-size)         BATCH_SIZE="$2";         shift 2 ;;
@@ -89,9 +85,6 @@ done
 
 [[ "${COLLECTIONS_RATIO}" =~ ^[0-9]+(\.[0-9]+)?$ ]] || \
   { echo "COLLECTIONS_RATIO must be a positive decimal. Got: ${COLLECTIONS_RATIO}"; exit 1; }
-
-[[ "${SITES}" =~ ^[0-9]+$ && "${SITES}" -gt 0 ]] || \
-  { echo "SITES must be a positive integer. Got: ${SITES}"; exit 1; }
 
 [[ "${SHARDS}" =~ ^[1-9]$ ]] || \
   { echo "SHARDS must be a single digit integer (1-9). Got: ${SHARDS}"; exit 1; }
@@ -117,8 +110,7 @@ cd "${SCRIPT_DIR}"
 # ── Derived values ────────────────────────────────────────────────────────────
 ceil_div() { echo $(( ($1 + $2 - 1) / $2 )); }
 
-# Accounts assigned to each site (ceiling-divide so every account is covered)
-PER_SITE_ACCOUNTS="$(ceil_div "${NUMBER_ACCOUNTS}" "${SITES}")"
+PER_SITE_ACCOUNTS="${NUMBER_ACCOUNTS}"
 
 # Read thread/batch settings from the base template
 # --threads overrides the threads for accounts and transactions; collections = 1.
@@ -171,16 +163,23 @@ ACTUAL_COLLECTIONS=$(( COL_STOP_AFTER * COL_THREADS * COL_BATCH ))
 #
 # DB_TRANSFORMS     : rewrites all database references in the generated configs
 #
+# ACCOUNT_ID_TRANSFORM : applied to the seed config; injects shard-aware accountId formulas
+#   • accounts.variables   : adds "seq": "%sequence" and "sitePfx": "_S1_" (overridden at seed time by seed-data.sh)
+#   • accounts.accountId   : "SHD{seq%S}" + #sitePfx + "{seq}" (per-doc template variable)
+#   • transactions/collections.dictionaries : removed (no DB pre-load needed)
+#   • transactions/collections.variables   : adds "sitePfx": "_S1_"
+#   • transactions/collections.accountId   : "SHD{batchSeq%S}" + #sitePfx + "{batchSeq}"
+#                                            (workload variable, batch-scoped)
 ACCOUNT_ID_TRANSFORM='
   .templates |= map(
     if .name == "accounts" then
-      .variables = {"seq": "%sequence"}
+      .variables = {"seq": "%sequence", "sitePfx": "_S1_"}
       | .template.accountId = {
           "%stringConcat": {
             "of": [
               "SHD",
               { "%toString": { "of": { "%mod": { "of": "#seq", "by": $shards } } } },
-              ("_S" + ($siteIndex | tostring) + "_"),
+              "#sitePfx",
               { "%toString": { "of": "#seq" } }
             ],
             "sep": ""
@@ -188,12 +187,13 @@ ACCOUNT_ID_TRANSFORM='
         }
     elif (.name == "transactions" or .name == "collections") then
       del(.dictionaries)
+      | .variables = {"sitePfx": "_S1_"}
       | .template.accountId = {
           "%stringConcat": {
             "of": [
               "SHD",
               { "%toString": { "of": { "%mod": { "of": "#batchSeq", "by": $shards } } } },
-              ("_S" + ($siteIndex | tostring) + "_"),
+              "#sitePfx",
               { "%toString": { "of": "#batchSeq" } }
             ],
             "sep": ""
@@ -238,15 +238,13 @@ DB_TRANSFORMS='
   .templates |= map(.database = $dbName)
 '
 
-# ── Helper: generate config for one site ──────────────────────────────────────
-gen_site() {
-  local site_index="$1"
+# ── Helper: generate seed config ─────────────────────────────────────────────
+gen_seed() {
   local seed_json
 
   seed_json="$(jq \
     --arg  uri                "${MONGO_URI}" \
     --arg  dbName             "${DB_NAME}" \
-    --argjson siteIndex       "${site_index}" \
     --argjson shards          "${SHARDS}" \
     --argjson batchSeqMax     "${ACTUAL_ACCOUNTS}" \
     --argjson accountsStopAfter "${ACCOUNTS_STOP_AFTER}" \
@@ -275,16 +273,16 @@ gen_site() {
     " "${SEED_BASE}")"
 
   if [[ "${DRY_RUN}" -eq 1 ]]; then
-    echo "==> [site ${site_index}] seed-site-${site_index}.json"
+    echo "==> seed-site.json"
     echo "${seed_json}" | jq .
     echo
   else
-    echo "${seed_json}" > "${OUT_DIR}/seed-site-${site_index}.json"
-    echo "    seed-site-${site_index}.json"
+    echo "${seed_json}" > "${OUT_DIR}/seed-site.json"
+    echo "    seed-site.json"
   fi
 }
 
-# ── Generate test config (same for every site) ────────────────────────────────
+# ── Generate test config ──────────────────────────────────────────────────────
 TEST_JSON="$(jq \
   --arg uri "${MONGO_URI}" \
   --arg dbName "${DB_NAME}" \
@@ -293,10 +291,8 @@ TEST_JSON="$(jq \
 
 # ── Dry-run output ────────────────────────────────────────────────────────────
 if [[ "${DRY_RUN}" -eq 1 ]]; then
-  for (( i=1; i<=SITES; i++ )); do
-    gen_site "${i}"
-  done
-  echo "==> test.json (shared across all sites)"
+  gen_seed
+  echo "==> test.json"
   echo "${TEST_JSON}" | jq .
   exit 0
 fi
@@ -304,16 +300,14 @@ fi
 # ── Write files ───────────────────────────────────────────────────────────────
 mkdir -p "${OUT_DIR}"
 echo "==> Generated harness configs in ${OUT_DIR}/"
-for (( i=1; i<=SITES; i++ )); do
-  gen_site "${i}"
-done
+gen_seed
 echo "${TEST_JSON}" > "${OUT_DIR}/test.json"
-echo "    test.json  (shared)"
+echo "    test.json"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
-echo "==> Seeding parameters  (${SITES} site(s), ${SHARDS} shard(s))"
-printf "    %-22s %s\n" "Accounts per site:"  "${PER_SITE_ACCOUNTS}"
+echo "==> Seeding parameters  (${SHARDS} shard(s))"
+printf "    %-22s %s\n" "Accounts:"           "${PER_SITE_ACCOUNTS}"
 printf "    %-22s %s\n" "TX per account:"     "${TX_PER_ACCOUNT}"
 printf "    %-22s %s\n" "Collections ratio:"  "${COLLECTIONS_RATIO}"
 printf "    %-22s %s\n" "Database name:"      "${DB_NAME}"

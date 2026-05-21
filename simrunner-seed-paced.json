@@ -12,13 +12,15 @@
       "database": "simrunner",
       "collection": "accounts",
       "variables": {
-        "seq": "%sequence"
+        "seq": "%sequence",
+        "sitePfx": "_S1_"
       },
       "template": {
         "accountId": {
           "%stringConcat": {
             "of": [
-              "SHD0_S1_",
+              "SHD0",
+              "#sitePfx",
               { "%toString": { "of": "#seq" } }
             ],
             "sep": ""
@@ -137,6 +139,9 @@
       "name": "transactions",
       "database": "simrunner",
       "collection": "transactions",
+      "variables": {
+        "sitePfx": "_S1_"
+      },
       "template": {
         "transactionId": {
           "%stringConcat": {
@@ -158,7 +163,8 @@
         "accountId": {
           "%stringConcat": {
             "of": [
-              "SHD0_S1_",
+              "SHD0",
+              "#sitePfx",
               { "%toString": { "of": "#batchSeq" } }
             ],
             "sep": ""
@@ -257,6 +263,9 @@
       "name": "collections",
       "database": "simrunner",
       "collection": "collections",
+      "variables": {
+        "sitePfx": "_S1_"
+      },
       "template": {
         "collectionId": {
           "%stringConcat": {
@@ -278,7 +287,8 @@
         "accountId": {
           "%stringConcat": {
             "of": [
-              "SHD0_S1_",
+              "SHD0",
+              "#sitePfx",
               { "%toString": { "of": "#batchSeq" } }
             ],
             "sep": ""

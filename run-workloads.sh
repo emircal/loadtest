@@ -200,7 +200,9 @@ cd "${SCRIPT_DIR}"
 TEST_CONFIG="${HARNESS_DIR}/test.json"
 
 if [[ -z "${BASE_CONFIG}" ]]; then
-  if [[ -f "${HARNESS_DIR}/seed-site-1.json" ]]; then
+  if [[ -f "${HARNESS_DIR}/seed-site.json" ]]; then
+    BASE_CONFIG="${HARNESS_DIR}/seed-site.json"
+  elif [[ -f "${HARNESS_DIR}/seed-site-1.json" ]]; then
     BASE_CONFIG="${HARNESS_DIR}/seed-site-1.json"
   elif [[ -f "${HARNESS_DIR}/seed-accounts-site-1.json" ]]; then
     BASE_CONFIG="${HARNESS_DIR}/seed-accounts-site-1.json"

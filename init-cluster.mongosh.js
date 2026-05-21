@@ -16,10 +16,10 @@
 //      to each shard so inserts can fan out immediately
 
 (function main() {
-  const { dbName, sites } = resolveArgs();
+  const { dbName } = resolveArgs();
 
   if (!dbName) {
-    throw new Error('Usage: INIT_CLUSTER_DB_NAME=<db-name> [INIT_CLUSTER_SITES=<count>] mongosh <uri> init-cluster.mongosh.js');
+    throw new Error('Usage: INIT_CLUSTER_DB_NAME=<db-name> mongosh <uri> init-cluster.mongosh.js');
   }
 
   const adminDb = db.getSiblingDB('admin');
@@ -100,49 +100,32 @@ function resolveArgs() {
   const argv = typeof process !== 'undefined' ? process.argv.slice(2) : [];
 
   if (injected && typeof injected === 'object') {
-    return normalizeArgs(injected.dbName, injected.sites);
+    return normalizeArgs(injected.dbName);
   }
 
   if (env && env.INIT_CLUSTER_DB_NAME) {
-    return normalizeArgs(env.INIT_CLUSTER_DB_NAME, env.INIT_CLUSTER_SITES);
+    return normalizeArgs(env.INIT_CLUSTER_DB_NAME);
   }
 
   if (argv.length > 0) {
     return parseLegacyArgs(argv);
   }
 
-  return { dbName: '', sites: 1 };
+  return { dbName: '' };
 }
 
 function parseLegacyArgs(args) {
   const dbName = args[0];
-  let sites = 1;
 
   for (let i = 1; i < args.length; i += 1) {
-    if (args[i] === '--sites') {
-      if (i + 1 >= args.length) {
-        throw new Error('--sites requires a value');
-      }
-
-      sites = Number(args[i + 1]);
-      i += 1;
-      continue;
-    }
-
     throw new Error(`Unknown argument: ${args[i]}`);
   }
 
-  return normalizeArgs(dbName, sites);
+  return normalizeArgs(dbName);
 }
 
-function normalizeArgs(dbName, sitesValue) {
-  const sites = sitesValue === undefined || sitesValue === '' ? 1 : Number(sitesValue);
-
-  if (!Number.isInteger(sites) || sites < 1) {
-    throw new Error(`sites must be a positive integer. Got: ${sitesValue}`);
-  }
-
-  return { dbName, sites };
+function normalizeArgs(dbName) {
+  return { dbName };
 }
 
 function ensureCollection(database, collectionName) {
