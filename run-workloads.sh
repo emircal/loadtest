@@ -18,6 +18,7 @@ Options:
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
   --dict-limit N      Max values to preload per remembered field (default: 100000, max: 5000000)
+  --txn-id-source MODE Transaction ID source: remembered | random | none (default: remembered)
   --disable-aggregates Exclude aggregate workloads from generated test config
   --disable-account-reads Exclude ReadTxnByAcct and ReadCollByAcct workloads
   --duration-ms N     Global stopAfterDuration in milliseconds
@@ -57,6 +58,7 @@ READ_PCT=50
 TOTAL_THREADS=12
 BASE_CONFIG=""
 DICT_LIMIT=100000
+TXN_ID_SOURCE="remembered"
 DISABLE_AGGREGATES=0
 DISABLE_ACCOUNT_READS=0
 DURATION_MS=""
@@ -100,6 +102,7 @@ while [[ $# -gt 0 ]]; do
     --read-pct)     READ_PCT="$2"; shift 2 ;;
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
     --dict-limit)   DICT_LIMIT="$2"; shift 2 ;;
+    --txn-id-source) TXN_ID_SOURCE="$2"; shift 2 ;;
     --disable-aggregates) DISABLE_AGGREGATES=1; shift ;;
     --disable-account-reads) DISABLE_ACCOUNT_READS=1; shift ;;
     --duration-ms)       DURATION_MS="$2"; shift 2 ;;
@@ -153,6 +156,14 @@ if ! is_positive_int "${DICT_LIMIT}"; then
   echo "Error: --dict-limit must be a positive integer. Got: ${DICT_LIMIT}"
   exit 1
 fi
+
+case "${TXN_ID_SOURCE}" in
+  remembered|random|none) ;;
+  *)
+    echo "Error: --txn-id-source must be one of: remembered, random, none. Got: ${TXN_ID_SOURCE}"
+    exit 1
+    ;;
+esac
 
 if [[ "${DICT_LIMIT}" -gt 5000000 ]]; then
   echo "Error: --dict-limit exceeds max allowed value (5000000). Got: ${DICT_LIMIT}"
@@ -229,6 +240,11 @@ if [[ "${DISABLE_ACCOUNT_READS}" -eq 1 ]]; then
 fi
 WRITE_WORKLOAD_COUNT=9
 
+if [[ "${TXN_ID_SOURCE}" == "none" ]]; then
+  READ_WORKLOAD_COUNT=$(( READ_WORKLOAD_COUNT - 1 ))
+  WRITE_WORKLOAD_COUNT=$(( WRITE_WORKLOAD_COUNT - 2 ))
+fi
+
 READ_POOL=0
 WRITE_POOL=0
 
@@ -273,6 +289,7 @@ jq -n \
   --argjson readPool "${READ_POOL}" \
   --argjson writePool "${WRITE_POOL}" \
   --argjson dictLimit "${DICT_LIMIT}" \
+  --arg txnIdSource "${TXN_ID_SOURCE}" \
   --argjson disableAggregates "${DISABLE_AGGREGATES}" \
   --argjson disableAccountReads "${DISABLE_ACCOUNT_READS}" \
   --argjson durationMs "$(json_or_null "${DURATION_MS}")" \
@@ -356,12 +373,45 @@ jq -n \
           name: "ReadTxnById",
           template: "transactions",
           op: "find",
-          variables: { txnKey: "#txnKey" },
+          variables: (
+            if $txnIdSource == "remembered" then
+              { txnKey: "#txnKey" }
+            else
+              {
+                txnId: {
+                  "%stringConcat": {
+                    of: [
+                      "TXN",
+                      {
+                        "%toString": {
+                          of: {
+                            "%natural": {
+                              max: 2147483647
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    sep: ""
+                  }
+                }
+              }
+            end
+          ),
           params: {
-            filter: {
-              accountId: "#txnKey.accountId",
-              transactionId: "#txnKey.transactionId"
-            },
+            filter: (
+              if $txnIdSource == "remembered" then
+                {
+                  accountId: "#txnKey.accountId",
+                  transactionId: "#txnKey.transactionId"
+                }
+              else
+                {
+                  accountId: "#accountId",
+                  transactionId: "#txnId"
+                }
+              end
+            ),
             limit: 1
           }
         },
@@ -400,6 +450,11 @@ jq -n \
       ]
       | if $disableAccountReads == 1 then
           map(select(.name != "ReadTxnByAcct" and .name != "ReadCollByAcct"))
+        else
+          .
+        end
+      | if $txnIdSource == "none" then
+          map(select(.name != "ReadTxnById"))
         else
           .
         end;
@@ -451,12 +506,45 @@ jq -n \
           name: "UpdTxn",
           template: "transactions",
           op: "updateOne",
-          variables: { txnKey: "#txnKey" },
+          variables: (
+            if $txnIdSource == "remembered" then
+              { txnKey: "#txnKey" }
+            else
+              {
+                txnId: {
+                  "%stringConcat": {
+                    of: [
+                      "TXN",
+                      {
+                        "%toString": {
+                          of: {
+                            "%natural": {
+                              max: 2147483647
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    sep: ""
+                  }
+                }
+              }
+            end
+          ),
           params: {
-            filter: {
-              accountId: "#txnKey.accountId",
-              transactionId: "#txnKey.transactionId"
-            },
+            filter: (
+              if $txnIdSource == "remembered" then
+                {
+                  accountId: "#txnKey.accountId",
+                  transactionId: "#txnKey.transactionId"
+                }
+              else
+                {
+                  accountId: "#accountId",
+                  transactionId: "#txnId"
+                }
+              end
+            ),
             update: {
               "$set": {
                 "audit.rts": "%now",
@@ -473,12 +561,45 @@ jq -n \
           name: "DelTxn",
           template: "transactions",
           op: "deleteOne",
-          variables: { txnKey: "#txnKey" },
+          variables: (
+            if $txnIdSource == "remembered" then
+              { txnKey: "#txnKey" }
+            else
+              {
+                txnId: {
+                  "%stringConcat": {
+                    of: [
+                      "TXN",
+                      {
+                        "%toString": {
+                          of: {
+                            "%natural": {
+                              max: 2147483647
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    sep: ""
+                  }
+                }
+              }
+            end
+          ),
           params: {
-            filter: {
-              accountId: "#txnKey.accountId",
-              transactionId: "#txnKey.transactionId"
-            }
+            filter: (
+              if $txnIdSource == "remembered" then
+                {
+                  accountId: "#txnKey.accountId",
+                  transactionId: "#txnKey.transactionId"
+                }
+              else
+                {
+                  accountId: "#accountId",
+                  transactionId: "#txnId"
+                }
+              end
+            )
           }
         },
         {
@@ -521,7 +642,12 @@ jq -n \
             }
           }
         }
-      ];
+      ]
+      | if $txnIdSource == "none" then
+          map(select(.name != "UpdTxn" and .name != "DelTxn"))
+        else
+          .
+        end;
 
     (
       if $mode == "read" then
@@ -552,10 +678,14 @@ jq -n \
               | .template.accountId = "#batchAccountId"
               | . + {
                   remember: [
-                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit },
-                    { compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit }
+                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit }
                   ]
                 }
+              | if $txnIdSource == "remembered" then
+                  .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit }]
+                else
+                  .
+                end
             elif .name == "collections" then
               del(.variables)
               | del(.dictionaries)
@@ -582,7 +712,7 @@ jq -n \
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "==> Generated workload config: ${TEST_CONFIG}"
-  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}"
+  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}"
   echo
   jq '{workloads: [.workloads[] | {name, op, template, threads, pace, stopAfterDuration}]}' "${TEST_CONFIG}"
   echo
@@ -591,7 +721,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 fi
 
 echo "==> Generated workload config: ${TEST_CONFIG}"
-echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}"
+echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}"
 echo "==> Starting SimRunner (initial remembered-value preload may take time for large dict limits)"
 echo "==> Running test workloads (${TEST_CONFIG})"
 java -jar "${JAR_PATH}" "${TEST_CONFIG}"
