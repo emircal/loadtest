@@ -19,6 +19,8 @@ Options:
   --threads N         Total client threads to allocate (default: 12)
   --dict-limit N      Max values to preload per remembered field (default: 100000, max: 5000000)
   --txn-id-source MODE Transaction ID source: remembered | random | none (default: remembered)
+  --site N            Site index used in generated accountId when --txn-id-source random (default: 1)
+  --shards N          Shard count used in generated accountId when --txn-id-source random (default: 3)
   --disable-aggregates Exclude aggregate workloads from generated test config
   --disable-account-reads Exclude ReadTxnByAcct and ReadCollByAcct workloads
   --duration-ms N     Global stopAfterDuration in milliseconds
@@ -59,6 +61,8 @@ TOTAL_THREADS=12
 BASE_CONFIG=""
 DICT_LIMIT=100000
 TXN_ID_SOURCE="remembered"
+SITE_INDEX=1
+SHARD_COUNT=3
 DISABLE_AGGREGATES=0
 DISABLE_ACCOUNT_READS=0
 DURATION_MS=""
@@ -103,6 +107,8 @@ while [[ $# -gt 0 ]]; do
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
     --dict-limit)   DICT_LIMIT="$2"; shift 2 ;;
     --txn-id-source) TXN_ID_SOURCE="$2"; shift 2 ;;
+    --site)         SITE_INDEX="$2"; shift 2 ;;
+    --shards)       SHARD_COUNT="$2"; shift 2 ;;
     --disable-aggregates) DISABLE_AGGREGATES=1; shift ;;
     --disable-account-reads) DISABLE_ACCOUNT_READS=1; shift ;;
     --duration-ms)       DURATION_MS="$2"; shift 2 ;;
@@ -154,6 +160,16 @@ fi
 
 if ! is_positive_int "${DICT_LIMIT}"; then
   echo "Error: --dict-limit must be a positive integer. Got: ${DICT_LIMIT}"
+  exit 1
+fi
+
+if ! is_positive_int "${SITE_INDEX}"; then
+  echo "Error: --site must be a positive integer. Got: ${SITE_INDEX}"
+  exit 1
+fi
+
+if ! is_positive_int "${SHARD_COUNT}"; then
+  echo "Error: --shards must be a positive integer. Got: ${SHARD_COUNT}"
   exit 1
 fi
 
@@ -290,6 +306,8 @@ jq -n \
   --argjson writePool "${WRITE_POOL}" \
   --argjson dictLimit "${DICT_LIMIT}" \
   --arg txnIdSource "${TXN_ID_SOURCE}" \
+  --arg sitePfx "_S${SITE_INDEX}_" \
+  --argjson shardCount "${SHARD_COUNT}" \
   --argjson disableAggregates "${DISABLE_AGGREGATES}" \
   --argjson disableAccountReads "${DISABLE_ACCOUNT_READS}" \
   --argjson durationMs "$(json_or_null "${DURATION_MS}")" \
@@ -326,6 +344,38 @@ jq -n \
 
     def isWriteOp($op):
       ($op == "insert" or $op == "updateOne" or $op == "updateMany" or $op == "deleteOne" or $op == "deleteMany");
+
+    def needsTxnAccountId:
+      ($mode != "read" or $disableAccountReads != 1);
+
+    def randomTxnAccountIdExpr:
+      {
+        "%stringConcat": {
+          of: [
+            "SHD",
+            {
+              "%toString": {
+                of: {
+                  "%natural": {
+                    max: $shardCount
+                  }
+                }
+              }
+            },
+            $sitePfx,
+            {
+              "%toString": {
+                of: {
+                  "%natural": {
+                    max: 2147483647
+                  }
+                }
+              }
+            }
+          ],
+          sep: ""
+        }
+      };
 
     def resolvedDuration($op):
       if isReadOp($op) then
@@ -378,6 +428,7 @@ jq -n \
               { txnKey: "#txnKey" }
             else
               {
+                txnAccountId: randomTxnAccountIdExpr,
                 txnId: {
                   "%stringConcat": {
                     of: [
@@ -407,7 +458,7 @@ jq -n \
                 }
               else
                 {
-                  accountId: "#accountId",
+                  accountId: "#txnAccountId",
                   transactionId: "#txnId"
                 }
               end
@@ -432,8 +483,21 @@ jq -n \
           name: "ReadTxnByAcct",
           template: "transactions",
           op: "find",
+          variables: (
+            if $txnIdSource == "random" then
+              { txnAccountId: randomTxnAccountIdExpr }
+            else
+              null
+            end
+          ),
           params: {
-            filter: { accountId: "#accountId" },
+            filter: (
+              if $txnIdSource == "random" then
+                { accountId: "#txnAccountId" }
+              else
+                { accountId: "#accountId" }
+              end
+            ),
             sort: { "transactionDetails.postDate": -1 },
             limit: 20
           }
@@ -500,7 +564,13 @@ jq -n \
           name: "InsTxn",
           template: "transactions",
           op: "insert",
-          variables: { batchAccountId: "#accountId" }
+          variables: (
+            if $txnIdSource == "random" then
+              { batchAccountId: randomTxnAccountIdExpr }
+            else
+              { batchAccountId: "#accountId" }
+            end
+          )
         },
         {
           name: "UpdTxn",
@@ -511,6 +581,7 @@ jq -n \
               { txnKey: "#txnKey" }
             else
               {
+                txnAccountId: randomTxnAccountIdExpr,
                 txnId: {
                   "%stringConcat": {
                     of: [
@@ -540,7 +611,7 @@ jq -n \
                 }
               else
                 {
-                  accountId: "#accountId",
+                  accountId: "#txnAccountId",
                   transactionId: "#txnId"
                 }
               end
@@ -566,6 +637,7 @@ jq -n \
               { txnKey: "#txnKey" }
             else
               {
+                txnAccountId: randomTxnAccountIdExpr,
                 txnId: {
                   "%stringConcat": {
                     of: [
@@ -595,7 +667,7 @@ jq -n \
                 }
               else
                 {
-                  accountId: "#accountId",
+                  accountId: "#txnAccountId",
                   transactionId: "#txnId"
                 }
               end
@@ -676,11 +748,12 @@ jq -n \
               del(.variables)
               | del(.dictionaries)
               | .template.accountId = "#batchAccountId"
-              | . + {
-                  remember: [
-                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit }
-                  ]
-                }
+              | .remember = []
+              | if $txnIdSource == "remembered" and needsTxnAccountId then
+                  .remember += [{ field: "accountId", name: "accountId", preload: true, number: $dictLimit }]
+                else
+                  .
+                end
               | if $txnIdSource == "remembered" then
                   .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit }]
                 else
@@ -712,7 +785,7 @@ jq -n \
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "==> Generated workload config: ${TEST_CONFIG}"
-  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}"
+  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}, site=${SITE_INDEX}, shards=${SHARD_COUNT}"
   echo
   jq '{workloads: [.workloads[] | {name, op, template, threads, pace, stopAfterDuration}]}' "${TEST_CONFIG}"
   echo
@@ -721,7 +794,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 fi
 
 echo "==> Generated workload config: ${TEST_CONFIG}"
-echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}"
+echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}, site=${SITE_INDEX}, shards=${SHARD_COUNT}"
 echo "==> Starting SimRunner (initial remembered-value preload may take time for large dict limits)"
 echo "==> Running test workloads (${TEST_CONFIG})"
 java -jar "${JAR_PATH}" "${TEST_CONFIG}"
