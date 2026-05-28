@@ -345,9 +345,6 @@ jq -n \
     def isWriteOp($op):
       ($op == "insert" or $op == "updateOne" or $op == "updateMany" or $op == "deleteOne" or $op == "deleteMany");
 
-    def needsTxnAccountId:
-      ($mode != "read" or $disableAccountReads != 1);
-
     def randomTxnAccountIdExpr:
       {
         "%stringConcat": {
@@ -495,7 +492,7 @@ jq -n \
               if $txnIdSource == "random" then
                 { accountId: "#txnAccountId" }
               else
-                { accountId: "#accountId" }
+                { accountId: "#txnKey.accountId" }
               end
             ),
             sort: { "transactionDetails.postDate": -1 },
@@ -568,7 +565,7 @@ jq -n \
             if $txnIdSource == "random" then
               { batchAccountId: randomTxnAccountIdExpr }
             else
-              { batchAccountId: "#accountId" }
+              { batchAccountId: "#txnKey.accountId" }
             end
           )
         },
@@ -749,13 +746,8 @@ jq -n \
               | del(.dictionaries)
               | .template.accountId = "#batchAccountId"
               | .remember = []
-              | if $txnIdSource == "remembered" and needsTxnAccountId then
-                  .remember += [{ field: "accountId", name: "accountId", preload: true, number: $dictLimit }]
-                else
-                  .
-                end
               | if $txnIdSource == "remembered" then
-                  .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit }]
+                  .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit, preloadMode: "sample", preloadUnique: false }]
                 else
                   .
                 end
