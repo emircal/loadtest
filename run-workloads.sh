@@ -18,6 +18,8 @@ Options:
   --read-pct N        Read percentage (0-100) for mixed mode (default: 50)
   --threads N         Total client threads to allocate (default: 12)
   --dict-limit N      Max values to preload per remembered field (default: 100000, max: 5000000)
+  --preload-mode MODE Preload strategy for remembered fields: sample | sequential (default: sample)
+  --preload-unique    Require unique values when preloading remembered fields (default: false)
   --txn-id-source MODE Transaction ID source: remembered | random | none (default: remembered)
   --site N            Site index used in generated accountId when --txn-id-source random (default: 1)
   --shards N          Shard count used in generated accountId when --txn-id-source random (default: 3)
@@ -60,6 +62,8 @@ READ_PCT=50
 TOTAL_THREADS=12
 BASE_CONFIG=""
 DICT_LIMIT=100000
+PRELOAD_MODE="sample"
+PRELOAD_UNIQUE=0
 TXN_ID_SOURCE="remembered"
 SITE_INDEX=1
 SHARD_COUNT=3
@@ -106,6 +110,8 @@ while [[ $# -gt 0 ]]; do
     --read-pct)     READ_PCT="$2"; shift 2 ;;
     --threads)      TOTAL_THREADS="$2"; shift 2 ;;
     --dict-limit)   DICT_LIMIT="$2"; shift 2 ;;
+    --preload-mode) PRELOAD_MODE="$2"; shift 2 ;;
+    --preload-unique) PRELOAD_UNIQUE=1; shift ;;
     --txn-id-source) TXN_ID_SOURCE="$2"; shift 2 ;;
     --site)         SITE_INDEX="$2"; shift 2 ;;
     --shards)       SHARD_COUNT="$2"; shift 2 ;;
@@ -177,6 +183,14 @@ case "${TXN_ID_SOURCE}" in
   remembered|random|none) ;;
   *)
     echo "Error: --txn-id-source must be one of: remembered, random, none. Got: ${TXN_ID_SOURCE}"
+    exit 1
+    ;;
+esac
+
+case "${PRELOAD_MODE}" in
+  sample|sequential) ;;
+  *)
+    echo "Error: --preload-mode must be one of: sample, sequential. Got: ${PRELOAD_MODE}"
     exit 1
     ;;
 esac
@@ -305,6 +319,8 @@ jq -n \
   --argjson readPool "${READ_POOL}" \
   --argjson writePool "${WRITE_POOL}" \
   --argjson dictLimit "${DICT_LIMIT}" \
+  --arg preloadMode "${PRELOAD_MODE}" \
+  --argjson preloadUnique "${PRELOAD_UNIQUE}" \
   --arg txnIdSource "${TXN_ID_SOURCE}" \
   --arg sitePfx "_S${SITE_INDEX}_" \
   --argjson shardCount "${SHARD_COUNT}" \
@@ -469,7 +485,7 @@ jq -n \
           template: "collections",
           op: "find",
           params: {
-            filter: { accountId: "#accountId" },
+            filter: { accountId: "#collKey.accountId" },
             limit: 20
           }
         }
@@ -640,7 +656,7 @@ jq -n \
           name: "InsColl",
           template: "collections",
           op: "insert",
-          variables: { batchAccountId: "#accountId" }
+          variables: { batchAccountId: "#collKey.accountId" }
         },
         {
           name: "UpdColl",
@@ -703,7 +719,7 @@ jq -n \
               | .template.accountId = { "%stringTemplate": { template: "&&&&&&&&&&&&&&&&" } }
               | . + {
                   remember: [
-                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit }
+                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit, preloadMode: $preloadMode, preloadUnique: ($preloadUnique == 1) }
                   ]
                 }
             elif .name == "transactions" then
@@ -712,7 +728,7 @@ jq -n \
               | .template.accountId = "#batchAccountId"
               | .remember = []
               | if $txnIdSource == "remembered" then
-                  .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit, preloadMode: "sample", preloadUnique: false }]
+                  .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit, preloadMode: $preloadMode, preloadUnique: ($preloadUnique == 1) }]
                 else
                   . + { dictionaries: { accountIds: { type: "collection", collection: "accounts", query: {}, limit: $dictLimit, attribute: "accountId" } } }
                 end
@@ -722,8 +738,7 @@ jq -n \
               | .template.accountId = "#batchAccountId"
               | . + {
                   remember: [
-                    { field: "accountId", name: "accountId", preload: true, number: $dictLimit },
-                    { compound: ["accountId", "collectionId"], name: "collKey", preload: true, number: $dictLimit }
+                    { compound: ["accountId", "collectionId"], name: "collKey", preload: true, number: $dictLimit, preloadMode: $preloadMode, preloadUnique: ($preloadUnique == 1) }
                   ]
                 }
             else
@@ -742,7 +757,7 @@ jq -n \
 
 if [[ "${DRY_RUN}" -eq 1 ]]; then
   echo "==> Generated workload config: ${TEST_CONFIG}"
-  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}, site=${SITE_INDEX}, shards=${SHARD_COUNT}"
+  echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, preloadMode=${PRELOAD_MODE}, preloadUnique=${PRELOAD_UNIQUE}, txnIdSource=${TXN_ID_SOURCE}, site=${SITE_INDEX}, shards=${SHARD_COUNT}"
   echo
   jq '{workloads: [.workloads[] | {name, op, template, threads, pace, stopAfterDuration}]}' "${TEST_CONFIG}"
   echo
@@ -751,7 +766,7 @@ if [[ "${DRY_RUN}" -eq 1 ]]; then
 fi
 
 echo "==> Generated workload config: ${TEST_CONFIG}"
-echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, txnIdSource=${TXN_ID_SOURCE}, site=${SITE_INDEX}, shards=${SHARD_COUNT}"
+echo "mode=${MODE}, readPool=${READ_POOL}, writePool=${WRITE_POOL}, effectiveThreads=${TOTAL_EFFECTIVE_THREADS}, dictLimit=${DICT_LIMIT}, preloadMode=${PRELOAD_MODE}, preloadUnique=${PRELOAD_UNIQUE}, txnIdSource=${TXN_ID_SOURCE}, site=${SITE_INDEX}, shards=${SHARD_COUNT}"
 echo "==> Starting SimRunner (initial remembered-value preload may take time for large dict limits)"
 echo "==> Running test workloads (${TEST_CONFIG})"
 java -jar "${JAR_PATH}" "${TEST_CONFIG}"
