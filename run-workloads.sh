@@ -345,35 +345,6 @@ jq -n \
     def isWriteOp($op):
       ($op == "insert" or $op == "updateOne" or $op == "updateMany" or $op == "deleteOne" or $op == "deleteMany");
 
-    def randomTxnAccountIdExpr:
-      {
-        "%stringConcat": {
-          of: [
-            "SHD",
-            {
-              "%toString": {
-                of: {
-                  "%natural": {
-                    max: $shardCount
-                  }
-                }
-              }
-            },
-            $sitePfx,
-            {
-              "%toString": {
-                of: {
-                  "%natural": {
-                    max: 2147483647
-                  }
-                }
-              }
-            }
-          ],
-          sep: ""
-        }
-      };
-
     def resolvedDuration($op):
       if isReadOp($op) then
         ($durationReadMs // $durationMs)
@@ -425,7 +396,7 @@ jq -n \
               { txnKey: "#txnKey" }
             else
               {
-                txnAccountId: randomTxnAccountIdExpr,
+                txnAccountId: "#accountIds",
                 txnId: {
                   "%stringConcat": {
                     of: [
@@ -480,19 +451,13 @@ jq -n \
           name: "ReadTxnByAcct",
           template: "transactions",
           op: "find",
-          variables: (
-            if $txnIdSource == "random" then
-              { txnAccountId: randomTxnAccountIdExpr }
-            else
-              null
-            end
-          ),
+          variables: null,
           params: {
             filter: (
-              if $txnIdSource == "random" then
-                { accountId: "#txnAccountId" }
-              else
+              if $txnIdSource == "remembered" then
                 { accountId: "#txnKey.accountId" }
+              else
+                { accountId: "#accountIds" }
               end
             ),
             sort: { "transactionDetails.postDate": -1 },
@@ -562,10 +527,10 @@ jq -n \
           template: "transactions",
           op: "insert",
           variables: (
-            if $txnIdSource == "random" then
-              { batchAccountId: randomTxnAccountIdExpr }
-            else
+            if $txnIdSource == "remembered" then
               { batchAccountId: "#txnKey.accountId" }
+            else
+              { batchAccountId: "#accountIds" }
             end
           )
         },
@@ -578,7 +543,7 @@ jq -n \
               { txnKey: "#txnKey" }
             else
               {
-                txnAccountId: randomTxnAccountIdExpr,
+                txnAccountId: "#accountIds",
                 txnId: {
                   "%stringConcat": {
                     of: [
@@ -634,7 +599,7 @@ jq -n \
               { txnKey: "#txnKey" }
             else
               {
-                txnAccountId: randomTxnAccountIdExpr,
+                txnAccountId: "#accountIds",
                 txnId: {
                   "%stringConcat": {
                     of: [
@@ -749,7 +714,7 @@ jq -n \
               | if $txnIdSource == "remembered" then
                   .remember += [{ compound: ["accountId", "transactionId"], name: "txnKey", preload: true, number: $dictLimit, preloadMode: "sample", preloadUnique: false }]
                 else
-                  .
+                  . + { dictionaries: { accountIds: { type: "collection", collection: "accounts", query: {}, limit: $dictLimit, attribute: "accountId" } } }
                 end
             elif .name == "collections" then
               del(.variables)
